@@ -213,9 +213,45 @@ func boostProcess(pid uint32) {
 	)
 }
 
-func waitProcess(hProcess syscall.Handle) int {
-	syscall.WaitForSingleObject(hProcess, infinite)
-	var exitCode uint32
-	procGetExitCodeProcess.Call(uintptr(hProcess), uintptr(unsafe.Pointer(&exitCode)))
-	return int(exitCode)
+var (
+	procEnumWindows              = user32.NewProc("EnumWindows")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
+)
+
+var foundVisible uint32
+
+var enumCb = syscall.NewCallback(func(hwnd, targetPid uintptr) uintptr {
+	var pid uint32
+	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	if uintptr(pid) == targetPid {
+		vis, _, _ := procIsWindowVisible.Call(hwnd)
+		if vis != 0 {
+			foundVisible = 1
+			return 0
+		}
+	}
+	return 1
+})
+
+func hasVisibleWindow(pid uint32) bool {
+	foundVisible = 0
+	procEnumWindows.Call(enumCb, uintptr(pid))
+	return foundVisible != 0
+}
+
+func waitProcess(hProcess syscall.Handle, pid uint32) int {
+	for {
+		// Child exited?
+		ret, _ := syscall.WaitForSingleObject(hProcess, 200)
+		if ret == 0 { // WAIT_OBJECT_0
+			var exitCode uint32
+			procGetExitCodeProcess.Call(uintptr(hProcess), uintptr(unsafe.Pointer(&exitCode)))
+			return int(exitCode)
+		}
+
+		if hasVisibleWindow(pid) {
+			return 0
+		}
+	}
 }
