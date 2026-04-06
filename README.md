@@ -2,101 +2,103 @@
 
 [![en](https://img.shields.io/badge/lang-English-blue)](README.en.md)
 
-JVM-враппер для STALCRAFT, который динамически подбирает JVM-флаги и повышает приоритет процесса под ваше железо.
+JVM-враппер для STALCRAFT. Автоматически оптимизирует настройки Java под ваше железо для лучшей производительности.
 
 ## Что делает
 
-- **Определяет** систему: RAM (всего + свободно), ядра CPU, поддержка large pages
-- **Генерирует** оптимальные JVM-флаги: размер heap, потоки GC, G1 region size, metaspace, code cache и другое
-- **Заменяет** стандартные JVM-аргументы лаунчера на оптимизированные
-- **Бустит** процесс игры: `HIGH_PRIORITY_CLASS`, приоритет памяти, приоритет I/O
-- **Устанавливается** прозрачно через Windows IFEO — файлы игры не затрагиваются
+- Подбирает оптимальные настройки Java (память, сборщик мусора, потоки) под ваш ПК
+- Повышает приоритет процесса игры
+- Устанавливается один раз — работает автоматически при каждом запуске
+- Файлы игры не затрагиваются
 
 ## Установка
 
-Скачайте `wrapper.exe` из [Releases](../../releases), положите куда угодно и запустите от админа.
+1. Скачайте `wrapper.exe` из [Releases](../../releases)
+2. Положите куда угодно
+3. Запустите от имени администратора
 
-Просто запустите `wrapper.exe` — откроется интерактивное меню:
+Откроется меню:
 
 ```
-STALCRAFT JVM Optimization Wrapper
------------------------------------
   > Install
     Uninstall
     Status
     Exit
 ```
 
-Используйте стрелки для выбора, Enter для подтверждения.
+Стрелками выберите **Install**, нажмите Enter. Готово.
 
-Готово. Каждый запуск игры теперь автоматически проходит через враппер.
+Поддерживаются обе версии игры:
+- `stalcraft.exe` (основной лаунчер)
+- `stalcraftw.exe` (Steam)
 
-Поддерживаются обе версии:
-- `stalcraft.exe` (основной лаунчер) → `java.exe`
-- `stalcraftw.exe` (Steam) → `javaw.exe`
+## Удаление
 
-### Команды из терминала
+Запустите `wrapper.exe` от админа и выберите **Uninstall**.
 
-```
-wrapper.exe --install     # установить IFEO-хук
-wrapper.exe --status      # проверить статус установки
-wrapper.exe --uninstall   # удалить IFEO-хук
-```
+## Large Pages (необязательно)
 
-## Как это работает
+Для дополнительной производительности можно включить large pages:
 
-Windows [Image File Execution Options](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options) перехватывает запуск `stalcraft.exe` / `stalcraftw.exe` и перенаправляет его через враппер. Враппер:
-
-1. Определяет железо через `GlobalMemoryStatusEx`, `runtime.NumCPU`, `GetLargePageMinimum`
-2. Рассчитывает оптимальные JVM-флаги на основе доступных ресурсов
-3. Убирает конфликтующие флаги из оригинальных аргументов лаунчера
-4. Запускает настоящий `java.exe` / `javaw.exe` с подобранными флагами и `HIGH_PRIORITY_CLASS`
-5. Применяет пост-буст: отключает снижение приоритета, выставляет максимальный приоритет памяти и I/O
-
-### Динамический подбор
-
-| Параметр | Формула |
-|----------|---------|
-| Heap | 50% свободной RAM, floor 25% от общей, cap min(16g, 75% от общей) |
-| ParallelGCThreads | ядра - 2, минимум 2 |
-| ConcGCThreads | parallel / 4, минимум 1 |
-| G1HeapRegionSize | 4m / 8m / 16m / 32m в зависимости от heap |
-| Metaspace | 128m / 256m / 512m в зависимости от heap |
-| CodeCache | heap/16, в пределах 128-512m |
-| SurvivorRatio | 32 (≤4 ядер) или 8 (>4 ядер) |
-| Large Pages | включается только при наличии `SeLockMemoryPrivilege` |
-
-### Вывод в stderr
-
-```
-[wrapper] System: 16 cores, 32.0GB total, 18.4GB free, large pages: yes
-[wrapper] Heap: 9g | GC: parallel=14 concurrent=3 | Region: 16m
-[wrapper] Flags: 28 injected, 3 removed
-[wrapper] Started PID 12345
-[wrapper] Process boosted
-```
-
-## Large Pages (опционально)
-
-Для лучшей производительности включите large pages:
-
-1. Запустите `secpol.msc`
-2. Локальные политики → Назначение прав пользователя → Блокировка страниц в памяти
+1. Откройте `secpol.msc`
+2. Локальные политики &rarr; Назначение прав пользователя &rarr; Блокировка страниц в памяти
 3. Добавьте своего пользователя, перезагрузитесь
 
-Враппер определит это автоматически и добавит `-XX:+UseLargePages`.
-
-## Сборка
-
-```
-go build -o wrapper.exe -ldflags="-s -w" .
-```
+Враппер определит это сам и включит автоматически.
 
 ## Требования
 
 - Windows 10/11
-- Права администратора (для `--install` / `--uninstall`)
-- Установленный STALCRAFT
+- Права администратора (для установки/удаления)
+
+---
+
+## Техническая информация
+
+### Механизм работы
+
+Враппер использует [IFEO](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options) для перехвата запуска игры. При запуске `stalcraft.exe` / `stalcraftw.exe` Windows перенаправляет вызов через враппер, который:
+
+1. Определяет железо: RAM, CPU, large pages (`GlobalMemoryStatusEx`, `GetLargePageMinimum`)
+2. Генерирует JVM-флаги под текущую конфигурацию
+3. Убирает конфликтующие флаги из оригинальных аргументов лаунчера
+4. Запускает процесс напрямую через `ntdll!NtCreateUserProcess`, обходя повторный IFEO-перехват
+5. Устанавливает повышенный приоритет памяти и I/O через `NtSetInformationProcess`
+6. Завершается после появления первого видимого окна игры
+
+### Обход IFEO
+
+Процесс создаётся через `NtCreateUserProcess` (ntdll) напрямую, минуя `CreateProcessInternalW` (kernel32), где происходит проверка IFEO. Дополнительно выставляется бит `IFEOSkipDebugger` в `PS_CREATE_INFO`.
+
+### Динамический подбор флагов
+
+| Параметр | Формула |
+|----------|---------|
+| Heap | 50% свободной RAM, floor 25% общей, cap min(16g, 75% общей) |
+| ParallelGCThreads | ядра - 2, мин. 2 |
+| ConcGCThreads | parallel / 4, мин. 1 |
+| G1HeapRegionSize | 4m / 8m / 16m / 32m по размеру heap |
+| Metaspace | 128m / 256m / 512m по размеру heap |
+| CodeCache | heap/16, в пределах 128-512m |
+| SurvivorRatio | 32 (&le;4 ядер) / 8 (>4 ядер) |
+| Large Pages | автоматически при наличии привилегии |
+
+На системах с &le;8GB RAM флаги не инжектируются.
+
+### CLI
+
+```
+wrapper.exe --install     # установить IFEO-хук
+wrapper.exe --status      # проверить статус
+wrapper.exe --uninstall   # удалить IFEO-хук
+```
+
+### Сборка
+
+```
+cd wrapper
+go build -o wrapper.exe -ldflags="-s -w" .
+```
 
 ## Лицензия
 

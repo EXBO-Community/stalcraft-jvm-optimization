@@ -1,57 +1,74 @@
 # stalcraft-wrapper
 
-JVM wrapper for STALCRAFT that dynamically tunes JVM flags and boosts process priority based on your hardware.
+JVM wrapper for STALCRAFT. Automatically optimizes Java settings for your hardware for better performance.
 
 ## What it does
 
-- **Detects** your system: RAM (total + free), CPU cores, large page support
-- **Generates** optimal JVM flags: heap size, GC threads, G1 region size, metaspace, code cache, and more
-- **Replaces** default JVM arguments from the launcher with tuned ones
-- **Boosts** the game process: `HIGH_PRIORITY_CLASS`, memory priority, I/O priority
-- **Installs** transparently via Windows IFEO — no game files modified
+- Tunes Java settings (memory, garbage collector, threads) for your PC
+- Boosts game process priority
+- Install once — works automatically on every launch
+- No game files modified
 
-## Install
+## Installation
 
-Download `wrapper.exe` from [Releases](../../releases), place it anywhere, and run as admin.
+1. Download `wrapper.exe` from [Releases](../../releases)
+2. Place it anywhere
+3. Run as administrator
 
-Just run `wrapper.exe` — an interactive menu will appear:
+A menu will appear:
 
 ```
-STALCRAFT JVM Optimization Wrapper
------------------------------------
   > Install
     Uninstall
     Status
     Exit
 ```
 
-Use arrow keys to select, Enter to confirm.
+Select **Install** with arrow keys, press Enter. Done.
 
-Done. Every game launch now goes through the wrapper automatically.
+Both game versions are supported:
+- `stalcraft.exe` (main launcher)
+- `stalcraftw.exe` (Steam)
 
-Both versions are supported:
-- `stalcraft.exe` (main launcher) → `java.exe`
-- `stalcraftw.exe` (Steam) → `javaw.exe`
+## Uninstall
 
-### Terminal commands
+Run `wrapper.exe` as admin and select **Uninstall**.
 
-```
-wrapper.exe --install     # register IFEO hook
-wrapper.exe --status      # check if installed
-wrapper.exe --uninstall   # remove IFEO hook
-```
+## Large Pages (optional)
 
-## How it works
+For additional performance, enable large pages:
 
-Windows [Image File Execution Options](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options) intercepts `stalcraft.exe` / `stalcraftw.exe` launch and redirects it through the wrapper. The wrapper:
+1. Open `secpol.msc`
+2. Local Policies &rarr; User Rights Assignment &rarr; Lock pages in memory
+3. Add your user, reboot
 
-1. Detects hardware via `GlobalMemoryStatusEx`, `runtime.NumCPU`, `GetLargePageMinimum`
-2. Calculates optimal JVM flags based on available resources
+The wrapper will detect and enable this automatically.
+
+## Requirements
+
+- Windows 10/11
+- Administrator privileges (for install/uninstall)
+
+---
+
+## Technical Details
+
+### How it works
+
+The wrapper uses [IFEO](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options) to intercept game launch. When `stalcraft.exe` / `stalcraftw.exe` starts, Windows redirects the call through the wrapper, which:
+
+1. Detects hardware: RAM, CPU, large pages (`GlobalMemoryStatusEx`, `GetLargePageMinimum`)
+2. Generates JVM flags for the current configuration
 3. Strips conflicting flags from the original launcher arguments
-4. Launches the real `java.exe` / `javaw.exe` with tuned flags and `HIGH_PRIORITY_CLASS`
-5. Applies post-launch boost: disables priority decay, sets max memory and I/O priority
+4. Launches the process directly via `ntdll!NtCreateUserProcess`, bypassing repeated IFEO interception
+5. Sets elevated memory and I/O priority via `NtSetInformationProcess`
+6. Exits after the game's first visible window appears
 
-### Dynamic tuning
+### IFEO bypass
+
+The process is created via `NtCreateUserProcess` (ntdll) directly, bypassing `CreateProcessInternalW` (kernel32) where the IFEO check occurs. The `IFEOSkipDebugger` bit is also set in `PS_CREATE_INFO` for defense in depth.
+
+### Dynamic flag tuning
 
 | Parameter | Formula |
 |-----------|---------|
@@ -61,40 +78,25 @@ Windows [Image File Execution Options](https://learn.microsoft.com/en-us/previou
 | G1HeapRegionSize | 4m / 8m / 16m / 32m based on heap |
 | Metaspace | 128m / 256m / 512m based on heap |
 | CodeCache | heap/16, clamped 128-512m |
-| SurvivorRatio | 32 (≤4 cores) or 8 (>4 cores) |
-| Large Pages | enabled only if `SeLockMemoryPrivilege` is available |
+| SurvivorRatio | 32 (&le;4 cores) / 8 (>4 cores) |
+| Large Pages | automatic when privilege available |
 
-### Stderr output
+On systems with &le;8GB RAM, flags are not injected.
 
-```
-[wrapper] System: 16 cores, 32.0GB total, 18.4GB free, large pages: yes
-[wrapper] Heap: 9g | GC: parallel=14 concurrent=3 | Region: 16m
-[wrapper] Flags: 28 injected, 3 removed
-[wrapper] Started PID 12345
-[wrapper] Process boosted
-```
-
-## Large Pages (optional)
-
-For best performance, enable large pages:
-
-1. Run `secpol.msc`
-2. Local Policies → User Rights Assignment → Lock pages in memory
-3. Add your user, reboot
-
-The wrapper will detect this automatically and add `-XX:+UseLargePages`.
-
-## Build
+### CLI
 
 ```
+wrapper.exe --install     # register IFEO hook
+wrapper.exe --status      # check status
+wrapper.exe --uninstall   # remove IFEO hook
+```
+
+### Build
+
+```
+cd wrapper
 go build -o wrapper.exe -ldflags="-s -w" .
 ```
-
-## Requirements
-
-- Windows 10/11
-- Administrator privileges (for `--install` / `--uninstall`)
-- STALCRAFT installed
 
 ## License
 

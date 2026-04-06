@@ -191,13 +191,7 @@ func ntCreateProcess(exePath string, args []string) (hProcess, hThread syscall.H
 }
 
 // boostProcess sets high memory/IO priority and disables priority decay.
-func boostProcess(pid uint32) {
-	handle, err := syscall.OpenProcess(processSetInfo|processQueryInfo, false, pid)
-	if err != nil {
-		return
-	}
-	defer syscall.CloseHandle(handle)
-
+func boostProcess(handle syscall.Handle) {
 	procSetProcessPriorityBoost.Call(uintptr(handle), 1)
 
 	mem := uint32(memoryPriorityHigh)

@@ -189,7 +189,7 @@ func run() int {
 	defer syscall.CloseHandle(hProcess)
 	defer syscall.CloseHandle(hThread)
 
-	boostProcess(pid)
+	boostProcess(hProcess)
 	return waitProcess(hProcess, pid)
 }
 
