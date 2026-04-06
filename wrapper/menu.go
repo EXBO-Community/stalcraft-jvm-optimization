@@ -3,16 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-	"syscall"
 	"unsafe"
 )
 
 var (
-	k32                  = syscall.NewLazyDLL("kernel32.dll")
-	procReadConsoleInput = k32.NewProc("ReadConsoleInputW")
-	procGetStdHandle     = k32.NewProc("GetStdHandle")
-	procSetConsoleMode   = k32.NewProc("SetConsoleMode")
-	procGetConsoleMode   = k32.NewProc("GetConsoleMode")
+	procReadConsoleInput = kernel32.NewProc("ReadConsoleInputW")
+	procGetStdHandle     = kernel32.NewProc("GetStdHandle")
+	procSetConsoleMode   = kernel32.NewProc("SetConsoleMode")
+	procGetConsoleMode   = kernel32.NewProc("GetConsoleMode")
 )
 
 const (

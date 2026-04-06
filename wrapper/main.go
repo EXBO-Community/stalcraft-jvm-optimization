@@ -2,28 +2,14 @@ package main
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
-	"unsafe"
 )
 
 var (
-	kernel32                    = syscall.NewLazyDLL("kernel32.dll")
-	ntdll                       = syscall.NewLazyDLL("ntdll.dll")
-	procSetProcessPriorityBoost = kernel32.NewProc("SetProcessPriorityBoost")
-	procNtSetInformationProcess = ntdll.NewProc("NtSetInformationProcess")
-)
-
-const (
-	highPriorityClass     = 0x00000080
-	processMemoryPriority = 0x27
-	memoryPriorityNormal  = 5
-	processIoPriority     = 0x21
-	ioPriorityHigh        = 3
-	processSetInfo        = 0x0200
-	processQueryInfo      = 0x0400
+	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	ntdll    = syscall.NewLazyDLL("ntdll.dll")
+	user32   = syscall.NewLazyDLL("user32.dll")
 )
 
 var exactRemove = map[string]bool{
@@ -60,32 +46,11 @@ var prefixRemove = []string{
 	"-Xmx",
 }
 
-var procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
-
 func hideConsole() {
-	user32 := syscall.NewLazyDLL("user32.dll")
-	showWindow := user32.NewProc("ShowWindow")
-	hwnd, _, _ := procGetConsoleWindow.Call()
+	hwnd, _, _ := kernel32.NewProc("GetConsoleWindow").Call()
 	if hwnd != 0 {
-		showWindow.Call(hwnd, 0)
+		user32.NewProc("ShowWindow").Call(hwnd, 0)
 	}
-}
-
-func resolveTarget(target string) string {
-	base := strings.ToLower(filepath.Base(target))
-	dir := filepath.Dir(target)
-
-	// stalcraftw.exe -> javaw.exe, stalcraft.exe -> java.exe
-	javaExe := "java.exe"
-	if base == "stalcraftw.exe" {
-		javaExe = "javaw.exe"
-	}
-
-	p := filepath.Join(dir, javaExe)
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	return target
 }
 
 func splitArgs(args []string) (jvm []string, mainClass string, app []string) {
@@ -142,30 +107,7 @@ func filterArgs(orig, injected []string) []string {
 	return append(result, app...)
 }
 
-func boostProcess(pid uint32) {
-	handle, err := syscall.OpenProcess(processSetInfo|processQueryInfo, false, pid)
-	if err != nil {
-		return
-	}
-	defer syscall.CloseHandle(handle)
-
-	procSetProcessPriorityBoost.Call(uintptr(handle), 1)
-
-	mem := uint32(memoryPriorityNormal)
-	procNtSetInformationProcess.Call(
-		uintptr(handle), uintptr(processMemoryPriority),
-		uintptr(unsafe.Pointer(&mem)), unsafe.Sizeof(mem),
-	)
-
-	iop := uint32(ioPriorityHigh)
-	procNtSetInformationProcess.Call(
-		uintptr(handle), uintptr(processIoPriority),
-		uintptr(unsafe.Pointer(&iop)), unsafe.Sizeof(iop),
-	)
-}
-
 func run() int {
-	target := resolveTarget(os.Args[1])
 	sys := detectSystem()
 
 	var args []string
@@ -175,26 +117,15 @@ func run() int {
 		args = filterArgs(os.Args[2:], generateFlags(sys))
 	}
 
-	cmd := exec.Command(target, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: highPriorityClass}
-
-	if err := cmd.Start(); err != nil {
+	hProcess, hThread, pid, err := ntCreateProcess(os.Args[1], args)
+	if err != nil {
 		return 1
 	}
+	defer syscall.CloseHandle(hProcess)
+	defer syscall.CloseHandle(hThread)
 
-	boostProcess(uint32(cmd.Process.Pid))
-
-	if err := cmd.Wait(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode()
-		}
-		return 1
-	}
-	return 0
+	boostProcess(pid)
+	return waitProcess(hProcess)
 }
 
 func main() {
