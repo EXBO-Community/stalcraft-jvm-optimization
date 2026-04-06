@@ -14,10 +14,14 @@ var (
 )
 
 const (
-	stdInputHandle  = ^uintptr(10 - 1) // STD_INPUT_HANDLE = -10
-	enableEchoInput = 0x0004
-	enableLineInput = 0x0002
-	keyEvent        = 0x0001
+	stdInputHandle  = ^uintptr(10 - 1) // -10
+	stdOutputHandle = ^uintptr(11 - 1) // -11
+
+	enableEchoInput               = 0x0004
+	enableLineInput               = 0x0002
+	enableVirtualTerminalProcessing = 0x0004
+
+	keyEvent = 0x0001
 )
 
 type inputRecord struct {
@@ -36,18 +40,29 @@ type menuItem struct {
 	action func()
 }
 
+func enableVT() func() {
+	hOut, _, _ := procGetStdHandle.Call(stdOutputHandle)
+	var mode uint32
+	procGetConsoleMode.Call(hOut, uintptr(unsafe.Pointer(&mode)))
+	procSetConsoleMode.Call(hOut, uintptr(mode|enableVirtualTerminalProcessing))
+	return func() { procSetConsoleMode.Call(hOut, uintptr(mode)) }
+}
+
 func interactiveMenu() {
+	restoreVT := enableVT()
+	defer restoreVT()
+
 	fmt.Println("STALCRAFT JVM Optimization Wrapper")
 	fmt.Println("-----------------------------------")
 	fmt.Println("RU: Используйте стрелки для выбора, Enter для подтверждения.")
-	fmt.Println("    Install  — установить оптимизацию (требуются права админа)")
-	fmt.Println("    Uninstall — удалить оптимизацию")
-	fmt.Println("    Status   — проверить статус установки")
+	fmt.Println("    Install  \u2014 установить оптимизацию (требуются права админа)")
+	fmt.Println("    Uninstall \u2014 удалить оптимизацию")
+	fmt.Println("    Status   \u2014 проверить статус установки")
 	fmt.Println()
 	fmt.Println("EN: Use arrow keys to select, Enter to confirm.")
-	fmt.Println("    Install   — enable JVM optimization (requires admin)")
-	fmt.Println("    Uninstall — remove JVM optimization")
-	fmt.Println("    Status    — check installation status")
+	fmt.Println("    Install   \u2014 enable JVM optimization (requires admin)")
+	fmt.Println("    Uninstall \u2014 remove JVM optimization")
+	fmt.Println("    Status    \u2014 check installation status")
 	fmt.Println()
 
 	items := []menuItem{
@@ -58,15 +73,22 @@ func interactiveMenu() {
 	}
 
 	hIn, _, _ := procGetStdHandle.Call(stdInputHandle)
+	hOut, _, _ := procGetStdHandle.Call(stdOutputHandle)
 
-	// Disable line/echo input for raw key reading
+	// Hide cursor
+	cursorInfo := [2]uint32{100, 0} // size=100, visible=FALSE
+	kernel32.NewProc("SetConsoleCursorInfo").Call(hOut, uintptr(unsafe.Pointer(&cursorInfo)))
+	defer func() {
+		cursorInfo[1] = 1 // visible=TRUE
+		kernel32.NewProc("SetConsoleCursorInfo").Call(hOut, uintptr(unsafe.Pointer(&cursorInfo)))
+	}()
+
 	var oldMode uint32
 	procGetConsoleMode.Call(hIn, uintptr(unsafe.Pointer(&oldMode)))
 	procSetConsoleMode.Call(hIn, uintptr(oldMode&^(enableLineInput|enableEchoInput)))
 	defer procSetConsoleMode.Call(hIn, uintptr(oldMode))
 
 	selected := 0
-
 	drawMenu(items, selected)
 
 	for {
@@ -84,6 +106,8 @@ func interactiveMenu() {
 			clearMenu(len(items))
 			procSetConsoleMode.Call(hIn, uintptr(oldMode))
 			items[selected].action()
+			fmt.Print("\nPress Enter to exit...")
+			fmt.Scanln()
 			return
 		case 0x1B: // VK_ESCAPE
 			clearMenu(len(items))
@@ -96,23 +120,24 @@ func interactiveMenu() {
 }
 
 func drawMenu(items []menuItem, selected int) {
-	// Move cursor to start of menu area
-	fmt.Print("\r")
 	for i := range items {
+		fmt.Print("\033[2K\r") // clear line, carriage return
 		if i == selected {
-			fmt.Printf("  > %s\n", items[i].label)
+			fmt.Printf("  > %s", items[i].label)
 		} else {
-			fmt.Printf("    %s\n", items[i].label)
+			fmt.Printf("    %s", items[i].label)
+		}
+		if i < len(items)-1 {
+			fmt.Print("\n")
 		}
 	}
-	// Move cursor back up
-	fmt.Printf("\033[%dA", len(items))
+	// Move cursor back to first line
+	fmt.Printf("\033[%dA\r", len(items)-1)
 }
 
 func clearMenu(n int) {
-	fmt.Print("\r")
 	for i := 0; i < n; i++ {
-		fmt.Print("\033[2K") // clear line
+		fmt.Print("\033[2K\r")
 		if i < n-1 {
 			fmt.Print("\n")
 		}
