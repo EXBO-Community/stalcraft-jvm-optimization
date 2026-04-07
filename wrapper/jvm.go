@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 func generateFlagsFromConfig(cfg Config) []string {
 	cc := cfg.ReservedCodeCacheSizeMB
@@ -10,7 +13,7 @@ func generateFlagsFromConfig(cfg Config) []string {
 
 	flags := []string{
 		fmt.Sprintf("-Xmx%dg", cfg.HeapSizeGB),
-		fmt.Sprintf("-Xms%dg", cfg.HeapSizeGB),
+		fmt.Sprintf("-Xms%dg", int(max(4, math.Round(float64(cfg.HeapSizeGB/2))))),
 
 		fmt.Sprintf("-XX:MetaspaceSize=%dm", cfg.MetaspaceMB),
 		fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", cfg.MetaspaceMB),
