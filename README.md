@@ -1,8 +1,8 @@
 # stalcraft-wrapper
 
 [![en](https://img.shields.io/badge/lang-English-blue)](README.en.md)
-[![Downloads](https://img.shields.io/github/downloads/SilentBless/stalcraft-jvm-optimization/total?label=Downloads&color=green)](../../releases)
-[![Latest Release](https://img.shields.io/github/v/release/SilentBless/stalcraft-jvm-optimization?label=Latest)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/EXBO-Community/stalcraft-jvm-optimization/total?label=Downloads&color=green)](../../releases)
+[![Latest Release](https://img.shields.io/github/v/release/EXBO-Community/stalcraft-jvm-optimization?label=Latest)](../../releases/latest)
 
 > **Дисклеймер:** Это **неофициальный** проект, созданный автором [SilentBless](https://github.com/SilentBless), благодарим его за работу над проектом. Проект **не поддерживается и не аффилирован с EXBO**, но был официально проверен на предмет безопасности для вашего ПК.
 
@@ -16,6 +16,7 @@ JVM-враппер для STALCRAFT. Автоматически оптимизи
 - Повышает приоритет процесса игры
 - Устанавливается один раз — работает автоматически при каждом запуске
 - Файлы игры не затрагиваются
+- Поддержка JSON-конфигов с возможностью тонкой настройки
 
 ## Установка
 
@@ -29,6 +30,8 @@ JVM-враппер для STALCRAFT. Автоматически оптимизи
   > Install
     Uninstall
     Status
+    Select Config
+    Regenerate Config
     Exit
 ```
 
@@ -41,6 +44,37 @@ JVM-враппер для STALCRAFT. Автоматически оптимизи
 ## Удаление
 
 Запустите `wrapper.exe` от админа и выберите **Uninstall**.
+
+## Конфигурация
+
+При первом запуске игры враппер автоматически создаёт `configs/default.json` с оптимальными настройками под ваше железо.
+
+### Готовые профили
+
+В папке `configs/` доступны готовые профили:
+
+| Профиль | Описание |
+|---------|----------|
+| `weak.json` | 4 ядра, 8-12 ГБ RAM — минимальная нагрузка на CPU |
+| `medium.json` | 6 ядер, 16 ГБ RAM — баланс производительности |
+| `max.json` | 8+ ядер, 32+ ГБ RAM — максимальная оптимизация |
+
+### Выбор конфига
+
+Через меню: **Select Config** &rarr; стрелками выберите нужный &rarr; Enter.
+
+Активный конфиг сохраняется в реестре (`HKCU\Software\StalcraftWrapper`), менять его можно в любое время.
+
+### Свой конфиг
+
+1. Скопируйте любой `.json` из `configs/`
+2. Переименуйте (например `my_setup.json`)
+3. Отредактируйте параметры
+4. Выберите через меню **Select Config**
+
+### Regenerate Config
+
+Пересоздаёт `default.json` заново под текущее железо (полезно после апгрейда).
 
 ## Large Pages (необязательно)
 
@@ -65,31 +99,11 @@ JVM-враппер для STALCRAFT. Автоматически оптимизи
 
 Враппер использует [IFEO](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options) для перехвата запуска игры. При запуске `stalcraft.exe` / `stalcraftw.exe` Windows перенаправляет вызов через враппер, который:
 
-1. Определяет железо: RAM, CPU, large pages (`GlobalMemoryStatusEx`, `GetLargePageMinimum`)
-2. Генерирует JVM-флаги под текущую конфигурацию
-3. Убирает конфликтующие флаги из оригинальных аргументов лаунчера
-4. Запускает процесс напрямую через `ntdll!NtCreateUserProcess`, обходя повторный IFEO-перехват
-5. Устанавливает повышенный приоритет памяти и I/O через `NtSetInformationProcess`
-6. Завершается после появления первого видимого окна игры
-
-### Обход IFEO
-
-Процесс создаётся через `NtCreateUserProcess` (ntdll) напрямую, минуя `CreateProcessInternalW` (kernel32), где происходит проверка IFEO. Дополнительно выставляется бит `IFEOSkipDebugger` в `PS_CREATE_INFO`.
-
-### Динамический подбор флагов
-
-| Параметр | Формула |
-|----------|---------|
-| Heap | 50% свободной RAM, floor 25% общей, cap min(16g, 75% общей) |
-| ParallelGCThreads | ядра - 2, мин. 2 |
-| ConcGCThreads | parallel / 4, мин. 1 |
-| G1HeapRegionSize | 4m / 8m / 16m / 32m по размеру heap |
-| Metaspace | 128m / 256m / 512m по размеру heap |
-| CodeCache | heap/16, в пределах 128-512m |
-| SurvivorRatio | 32 (&le;4 ядер) / 8 (>4 ядер) |
-| Large Pages | автоматически при наличии привилегии |
-
-На системах с &le;8GB RAM флаги не инжектируются.
+1. Загружает активный конфиг из `configs/` (или генерирует автоматически)
+2. Убирает конфликтующие флаги из оригинальных аргументов лаунчера
+3. Запускает процесс напрямую через `ntdll!NtCreateUserProcess`, обходя повторный IFEO-перехват
+4. Устанавливает повышенный приоритет памяти и I/O через `NtSetInformationProcess`
+5. Завершается после появления первого видимого окна игры
 
 ### CLI
 
@@ -105,6 +119,77 @@ wrapper.exe --uninstall   # удалить IFEO-хук
 cd wrapper
 go build -o wrapper.exe -ldflags="-s -w" .
 ```
+
+---
+
+## Параметры конфига
+
+### Память
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `heap_size_gb` | Размер heap (Xmx/Xms) в ГБ | 4-8 в зависимости от свободной RAM |
+| `pre_touch` | Заранее выделить всю heap-память при старте (`AlwaysPreTouch`) | `true` на 8+ ядрах, иначе `false` — ускоряет работу, но замедляет запуск |
+| `metaspace_mb` | Размер метаданных классов в МБ | 128 (heap &le;4g), 256 (heap &le;8g), 512 (heap >8g) |
+
+### G1GC — основные
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `max_gc_pause_millis` | Целевая максимальная пауза GC в мс. G1 будет стараться не превышать это время | 50 — баланс между частотой и длиной пауз |
+| `g1_heap_region_size_mb` | Размер одного региона G1 в МБ. Объекты >= половины региона считаются "огромными" | 8 (heap &le;4g), 16 (heap &le;8g), 32 (heap >8g) |
+| `g1_new_size_percent` | Минимальный % heap под молодое поколение | 23 — достаточно для аллокаций без переполнения |
+| `g1_max_new_size_percent` | Максимальный % heap под молодое поколение | 40-50 — больше = реже minor GC, но длиннее паузы |
+| `g1_reserve_percent` | % heap в резерве для защиты от to-space exhaustion | 20 — запас на случай пиковых аллокаций |
+| `g1_heap_waste_percent` | Допустимый % мусора в heap перед mixed GC | 5 — ниже = чище heap, но чаще mixed GC |
+| `g1_mixed_gc_count_target` | На сколько циклов разбить mixed GC | 3-4 — меньше = быстрее очистка, но длиннее каждая пауза |
+| `initiating_heap_occupancy_percent` | При каком % заполнения heap начать concurrent marking | 15 (сильный CPU) / 30 (слабый) — ниже = раньше начинает, меньше risk of full GC |
+| `g1_mixed_gc_live_threshold_percent` | Включать регион в mixed GC только если в нём < X% живых объектов | 90 — собирать только сильно загрязнённые регионы |
+| `g1_rset_updating_pause_time_percent` | % паузы на обновление RSet (remembered sets) | 0 (сильный CPU — вся работа concurrent) / 5-10 (слабый) |
+| `survivor_ratio` | Соотношение Eden к Survivor в молодом поколении | 32 — большой Eden, объекты быстро умирают или уходят в old gen |
+| `max_tenuring_threshold` | Сколько GC-циклов объект живёт в young gen перед переходом в old gen | 1 — для игр большинство объектов либо сразу умирают, либо живут вечно |
+
+### G1GC — продвинутые (минимизация STW)
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `g1_satb_buffer_enqueuing_threshold_percent` | При каком % заполнения SATB-буфера начать обработку | 30 — раньше обрабатывать = меньше работы в STW паузе. 0 = отключено |
+| `g1_conc_rs_hot_card_limit` | Лимит "горячих карт" для concurrent refinement | 16 — больше работы concurrent, меньше в STW. 0 = отключено |
+| `g1_conc_refinement_service_interval_millis` | Интервал concurrent refinement в мс | 150 — ровнее распределение фоновой нагрузки. 0 = отключено |
+| `gc_time_ratio` | Соотношение времени приложения к GC (N означает 1/(1+N) времени на GC) | 99 (сильный CPU — 99% приложению) / 19 (слабый — дефолт). 0 = отключено |
+| `use_dynamic_number_of_gc_threads` | Динамически менять кол-во GC потоков | `true` на 8+ ядрах |
+| `use_string_deduplication` | Дедупликация одинаковых строк в heap | `true` на 8+ ядрах — экономит память, но нагружает GC |
+
+### Потоки GC
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `parallel_gc_threads` | Потоки для STW-пауз (игра заморожена — можно больше) | ядра / 2, мин. 2 |
+| `conc_gc_threads` | Потоки для фоновой работы GC (конкурируют с игрой — держать низко) | ядра / 4, мин. 1 |
+| `soft_ref_lru_policy_ms_per_mb` | Время жизни soft-ссылок (мс на МБ свободной heap) | 10-25 — ниже = агрессивнее чистит, выше = дольше кэширует |
+
+### JIT-компиляция
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `reserved_code_cache_size_mb` | Общий размер code cache в МБ | 256 (слабый) / 400 (сильный) — хранит скомпилированный JIT-код |
+| `max_inline_level` | Максимальная глубина инлайнинга вызовов | 15 — глубже = быстрее, но больше code cache |
+| `freq_inline_size` | Макс. размер "горячего" метода для инлайнинга (байткод) | 500 — больше = агрессивнее инлайнинг |
+| `inline_small_code` | Инлайнить методы с нативным кодом до X байт | 4000 (сильный) / 0 = отключено (слабый) |
+| `max_node_limit` | Макс. узлов в графе компиляции одного метода | 240000 (сильный) / 0 = дефолт (слабый). Вместе с `node_limit_fudge_factor` |
+| `node_limit_fudge_factor` | Допуск сверх `max_node_limit` (должен быть 2-40% от него) | 8000 (при max_node_limit=240000). 0 = отключено |
+| `nmethod_sweep_activity` | Агрессивность очистки устаревшего JIT-кода (1-10) | 1 (сильный — минимальная очистка) / 0 = дефолт |
+| `dont_compile_huge_methods` | Пропускать компиляцию огромных методов | `false` на сильных CPU (компилировать всё), `true` на слабых |
+| `allocate_prefetch_style` | Стиль hardware prefetch при аллокации (0-3) | 3 (сильный — все поля), 0 = отключено |
+| `always_act_as_server_class` | Включить server-class оптимизации JVM | `true` на 8+ ядрах |
+| `use_xmm_for_array_copy` | Использовать XMM-регистры для копирования массивов | `true` на сильных CPU — быстрее `System.arraycopy` |
+| `use_fpu_for_spilling` | Использовать FPU-регистры для хранения промежуточных значений | `true` на сильных CPU — разгружает основные регистры |
+
+### Прочее
+
+| Параметр | Описание | Рекомендация |
+|----------|----------|--------------|
+| `use_large_pages` | Использовать Large Pages (требует настройки ОС) | `true` если настроен `SeLockMemoryPrivilege` |
 
 ## Лицензия
 

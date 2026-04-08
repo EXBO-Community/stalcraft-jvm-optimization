@@ -2,157 +2,104 @@ package main
 
 import "fmt"
 
-func generateFlags(sys SystemInfo) []string {
-	heap := calcHeap(sys)
-	parallel, conc := calcGCThreads(sys)
-	region := calcRegionSize(heap)
-	meta := calcMetaspace(heap)
-	cc := calcCodeCache(heap)
-	surv, tenure := calcSurvivor(sys)
-	softRef := calcSoftRef(heap)
+func generateFlagsFromConfig(cfg Config) []string {
+	cc := cfg.ReservedCodeCacheSizeMB
+	if cc == 0 {
+		cc = 256
+	}
 
 	flags := []string{
-		fmt.Sprintf("-Xmx%dg", heap),
-		fmt.Sprintf("-Xms%dg", heap),
-		"-XX:+AlwaysPreTouch",
+		fmt.Sprintf("-Xmx%dg", cfg.HeapSizeGB),
+		fmt.Sprintf("-Xms%dg", cfg.HeapSizeGB),
 
-		fmt.Sprintf("-XX:MetaspaceSize=%dm", meta),
-		fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", meta),
+		fmt.Sprintf("-XX:MetaspaceSize=%dm", cfg.MetaspaceMB),
+		fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", cfg.MetaspaceMB),
 
 		"-XX:+UseG1GC",
 		"-XX:+UnlockExperimentalVMOptions",
-		"-XX:MaxGCPauseMillis=50",
-		fmt.Sprintf("-XX:G1HeapRegionSize=%dm", region),
-		"-XX:G1NewSizePercent=30",
-		"-XX:G1MaxNewSizePercent=40",
-		"-XX:G1ReservePercent=15",
-		"-XX:G1HeapWastePercent=5",
-		"-XX:G1MixedGCCountTarget=4",
+		fmt.Sprintf("-XX:MaxGCPauseMillis=%d", cfg.MaxGCPauseMillis),
+		fmt.Sprintf("-XX:G1HeapRegionSize=%dm", cfg.G1HeapRegionSizeMB),
+		fmt.Sprintf("-XX:G1NewSizePercent=%d", cfg.G1NewSizePercent),
+		fmt.Sprintf("-XX:G1MaxNewSizePercent=%d", cfg.G1MaxNewSizePercent),
+		fmt.Sprintf("-XX:G1ReservePercent=%d", cfg.G1ReservePercent),
+		fmt.Sprintf("-XX:G1HeapWastePercent=%d", cfg.G1HeapWastePercent),
+		fmt.Sprintf("-XX:G1MixedGCCountTarget=%d", cfg.G1MixedGCCountTarget),
 		"-XX:+G1UseAdaptiveIHOP",
-		"-XX:InitiatingHeapOccupancyPercent=35",
-		"-XX:G1MixedGCLiveThresholdPercent=90",
-		"-XX:G1RSetUpdatingPauseTimePercent=5",
-		fmt.Sprintf("-XX:SurvivorRatio=%d", surv),
-		fmt.Sprintf("-XX:MaxTenuringThreshold=%d", tenure),
+		fmt.Sprintf("-XX:InitiatingHeapOccupancyPercent=%d", cfg.InitiatingHeapOccupancyPercent),
+		fmt.Sprintf("-XX:G1MixedGCLiveThresholdPercent=%d", cfg.G1MixedGCLiveThresholdPercent),
+		fmt.Sprintf("-XX:G1RSetUpdatingPauseTimePercent=%d", cfg.G1RSetUpdatingPauseTimePercent),
+		fmt.Sprintf("-XX:SurvivorRatio=%d", cfg.SurvivorRatio),
+		fmt.Sprintf("-XX:MaxTenuringThreshold=%d", cfg.MaxTenuringThreshold),
 
-		fmt.Sprintf("-XX:ParallelGCThreads=%d", parallel),
-		fmt.Sprintf("-XX:ConcGCThreads=%d", conc),
+		fmt.Sprintf("-XX:ParallelGCThreads=%d", cfg.ParallelGCThreads),
+		fmt.Sprintf("-XX:ConcGCThreads=%d", cfg.ConcGCThreads),
 
 		"-XX:+ParallelRefProcEnabled",
 		"-XX:+DisableExplicitGC",
-		fmt.Sprintf("-XX:SoftRefLRUPolicyMSPerMB=%d", softRef),
+		fmt.Sprintf("-XX:SoftRefLRUPolicyMSPerMB=%d", cfg.SoftRefLRUPolicyMSPerMB),
 
-		"-XX:+UseCompressedOops",
+		"-XX:-UseBiasedLocking",
+		"-XX:+DisableAttachMechanism",
+
 		fmt.Sprintf("-XX:ReservedCodeCacheSize=%dm", cc),
-		fmt.Sprintf("-XX:NonNMethodCodeHeapSize=%dm", calcNonMethod(cc)),
-		fmt.Sprintf("-XX:ProfiledCodeHeapSize=%dm", calcProfiled(cc)),
-		fmt.Sprintf("-XX:NonProfiledCodeHeapSize=%dm", calcNonProfiled(cc)),
-		"-XX:MaxInlineLevel=15",
-		"-XX:FreqInlineSize=500",
+		fmt.Sprintf("-XX:NonNMethodCodeHeapSize=%dm", cc*5/100),
+		fmt.Sprintf("-XX:ProfiledCodeHeapSize=%dm", cc*48/100),
+		fmt.Sprintf("-XX:NonProfiledCodeHeapSize=%dm", cc-cc*5/100-cc*48/100),
+		fmt.Sprintf("-XX:MaxInlineLevel=%d", cfg.MaxInlineLevel),
+		fmt.Sprintf("-XX:FreqInlineSize=%d", cfg.FreqInlineSize),
 
-		"-XX:+PerfDisableSharedMem",
 		"-Djdk.nio.maxCachedBufferSize=131072",
 	}
 
-	if sys.LargePages {
-		flags = append(flags,
-			"-XX:+UseLargePages",
-			fmt.Sprintf("-XX:LargePageSizeInBytes=%dm", sys.LargePageSize/(1024*1024)),
-		)
+	if cfg.PreTouch {
+		flags = append(flags, "-XX:+AlwaysPreTouch")
+	}
+	if cfg.G1SATBBufferEnqueueingThresholdPercent > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:G1SATBBufferEnqueueingThresholdPercent=%d", cfg.G1SATBBufferEnqueueingThresholdPercent))
+	}
+	if cfg.G1ConcRSHotCardLimit > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:G1ConcRSHotCardLimit=%d", cfg.G1ConcRSHotCardLimit))
+	}
+	if cfg.G1ConcRefinementServiceIntervalMillis > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:G1ConcRefinementServiceIntervalMillis=%d", cfg.G1ConcRefinementServiceIntervalMillis))
+	}
+	if cfg.GCTimeRatio > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:GCTimeRatio=%d", cfg.GCTimeRatio))
+	}
+	if cfg.UseDynamicNumberOfGCThreads {
+		flags = append(flags, "-XX:+UseDynamicNumberOfGCThreads")
+	}
+	if cfg.UseStringDeduplication {
+		flags = append(flags, "-XX:+UseStringDeduplication")
+	}
+	if cfg.InlineSmallCode > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:InlineSmallCode=%d", cfg.InlineSmallCode))
+	}
+	if cfg.MaxNodeLimit > 0 && cfg.NodeLimitFudgeFactor > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:NodeLimitFudgeFactor=%d", cfg.NodeLimitFudgeFactor))
+		flags = append(flags, fmt.Sprintf("-XX:MaxNodeLimit=%d", cfg.MaxNodeLimit))
+	}
+	if cfg.NmethodSweepActivity > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:NmethodSweepActivity=%d", cfg.NmethodSweepActivity))
+	}
+	if !cfg.DontCompileHugeMethods {
+		flags = append(flags, "-XX:-DontCompileHugeMethods")
+	}
+	if cfg.AllocatePrefetchStyle > 0 {
+		flags = append(flags, fmt.Sprintf("-XX:AllocatePrefetchStyle=%d", cfg.AllocatePrefetchStyle))
+	}
+	if cfg.AlwaysActAsServerClass {
+		flags = append(flags, "-XX:+AlwaysActAsServerClassMachine")
+	}
+	if cfg.UseXMMForArrayCopy {
+		flags = append(flags, "-XX:+UseXMMForArrayCopy")
+	}
+	if cfg.UseFPUForSpilling {
+		flags = append(flags, "-XX:+UseFPUForSpilling")
+	}
+	if cfg.UseLargePages {
+		flags = append(flags, "-XX:+UseLargePages")
 	}
 
 	return flags
-}
-
-func calcHeap(sys SystemInfo) uint64 {
-	free := bytesToGB(sys.FreeRAM)
-	total := bytesToGB(sys.TotalRAM)
-
-	if total <= 8 {
-		return 0
-	}
-
-	// Need at least 6GB free to inject flags, otherwise don't touch anything
-	if free < 6 {
-		return 0
-	}
-
-	heap := free / 2
-
-	if heap < 6 {
-		heap = 6
-	}
-	if heap > 8 {
-		heap = 8
-	}
-	return heap
-}
-
-func calcGCThreads(sys SystemInfo) (parallel, concurrent int) {
-	parallel = sys.CPUCores - 2
-	if parallel < 2 {
-		parallel = 2
-	}
-	concurrent = parallel / 4
-	if concurrent < 1 {
-		concurrent = 1
-	}
-	return
-}
-
-func calcRegionSize(heapGB uint64) uint64 {
-	switch {
-	case heapGB <= 4:
-		return 4
-	case heapGB <= 8:
-		return 8
-	case heapGB <= 16:
-		return 16
-	default:
-		return 32
-	}
-}
-
-func calcMetaspace(heapGB uint64) uint64 {
-	switch {
-	case heapGB <= 4:
-		return 128
-	case heapGB <= 8:
-		return 256
-	default:
-		return 512
-	}
-}
-
-func calcCodeCache(heapGB uint64) uint64 {
-	cc := heapGB * 1024 / 16
-	if cc < 128 {
-		cc = 128
-	}
-	if cc > 512 {
-		cc = 512
-	}
-	return cc
-}
-
-func calcNonMethod(cc uint64) uint64  { return cc * 5 / 100 }
-func calcProfiled(cc uint64) uint64   { return cc * 38 / 100 }
-func calcNonProfiled(cc uint64) uint64 { return cc - calcNonMethod(cc) - calcProfiled(cc) }
-
-func calcSurvivor(sys SystemInfo) (ratio, tenuring int) {
-	if sys.CPUCores <= 4 {
-		return 32, 1
-	}
-	return 8, 4
-}
-
-func calcSoftRef(heapGB uint64) int {
-	switch {
-	case heapGB <= 4:
-		return 10
-	case heapGB <= 8:
-		return 25
-	default:
-		return 50
-	}
 }

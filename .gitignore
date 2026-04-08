@@ -4,9 +4,11 @@
 *.o
 
 wrapper/wrapper
+build/
 
 __debug_bin*
 
+.claude/
 .idea/
 .vscode/
 *.swp

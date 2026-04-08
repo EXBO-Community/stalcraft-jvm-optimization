@@ -17,8 +17,8 @@ const (
 	stdInputHandle  = ^uintptr(10 - 1) // -10
 	stdOutputHandle = ^uintptr(11 - 1) // -11
 
-	enableEchoInput               = 0x0004
-	enableLineInput               = 0x0002
+	enableEchoInput                = 0x0004
+	enableLineInput                = 0x0002
 	enableVirtualTerminalProcessing = 0x0004
 
 	keyEvent = 0x0001
@@ -52,34 +52,89 @@ func interactiveMenu() {
 	restoreVT := enableVT()
 	defer restoreVT()
 
+	ensureConfigExists()
+	active := getActiveName()
+
 	fmt.Println("STALCRAFT JVM Optimization Wrapper")
 	fmt.Println("-----------------------------------")
-	fmt.Println("RU: Используйте стрелки для выбора, Enter для подтверждения.")
-	fmt.Println("    Install  \u2014 установить оптимизацию (требуются права админа)")
-	fmt.Println("    Uninstall \u2014 удалить оптимизацию")
-	fmt.Println("    Status   \u2014 проверить статус установки")
+	fmt.Printf("Active config: %s\n", active)
 	fmt.Println()
-	fmt.Println("EN: Use arrow keys to select, Enter to confirm.")
-	fmt.Println("    Install   \u2014 enable JVM optimization (requires admin)")
-	fmt.Println("    Uninstall \u2014 remove JVM optimization")
-	fmt.Println("    Status    \u2014 check installation status")
+	fmt.Println("RU: Стрелки для выбора, Enter для подтверждения.")
+	fmt.Println("EN: Arrow keys to select, Enter to confirm.")
 	fmt.Println()
 
 	items := []menuItem{
 		{"Install", install},
 		{"Uninstall", uninstall},
 		{"Status", status},
+		{"Select Config", selectConfigMenu},
+		{"Regenerate Config", regenerateConfig},
 		{"Exit", func() { os.Exit(0) }},
 	}
 
+	runMenu(items, true)
+}
+
+func selectConfigMenu() {
+	configs := listConfigs()
+	if len(configs) == 0 {
+		fmt.Println("[config] No configs found in configs/")
+		return
+	}
+
+	active := getActiveName()
+	items := make([]menuItem, 0, len(configs)+1)
+	for _, name := range configs {
+		n := name
+		label := "  " + n
+		if n == active {
+			label = "* " + n
+		}
+		items = append(items, menuItem{label, func() {
+			setActiveConfig(n)
+			fmt.Printf("[config] Active config set to: %s\n", n)
+		}})
+	}
+	items = append(items, menuItem{"< Back", func() {}})
+
+	fmt.Println()
+	fmt.Println("Select config (* = active):")
+	runMenu(items, false)
+}
+
+func regenerateConfig() {
+	sys := detectSystem()
+	cfg := generateConfig(sys)
+
+	fmt.Printf("[config] Detected: %d cores, %.1f GB RAM (%.1f GB free)",
+		sys.CPUCores, sys.TotalRAMGB(), sys.FreeRAMGB())
+	if sys.LargePages {
+		fmt.Print(", large pages available")
+	}
+	fmt.Println()
+
+	if sys.CPUCores >= 8 {
+		fmt.Println("[config] Profile: strong (8+ cores)")
+	} else {
+		fmt.Println("[config] Profile: standard")
+	}
+
+	if err := saveConfigAs(cfg, "default"); err != nil {
+		fmt.Fprintf(os.Stderr, "[config] Failed to save: %v\n", err)
+		return
+	}
+	setActiveConfig("default")
+	fmt.Println("[config] Regenerated default config.")
+}
+
+func runMenu(items []menuItem, waitAfter bool) {
 	hIn, _, _ := procGetStdHandle.Call(stdInputHandle)
 	hOut, _, _ := procGetStdHandle.Call(stdOutputHandle)
 
-	// Hide cursor
-	cursorInfo := [2]uint32{100, 0} // size=100, visible=FALSE
+	cursorInfo := [2]uint32{100, 0}
 	kernel32.NewProc("SetConsoleCursorInfo").Call(hOut, uintptr(unsafe.Pointer(&cursorInfo)))
 	defer func() {
-		cursorInfo[1] = 1 // visible=TRUE
+		cursorInfo[1] = 1
 		kernel32.NewProc("SetConsoleCursorInfo").Call(hOut, uintptr(unsafe.Pointer(&cursorInfo)))
 	}()
 
@@ -106,8 +161,10 @@ func interactiveMenu() {
 			clearMenu(len(items))
 			procSetConsoleMode.Call(hIn, uintptr(oldMode))
 			items[selected].action()
-			fmt.Print("\nPress Enter to exit...")
-			fmt.Scanln()
+			if waitAfter {
+				fmt.Print("\nPress Enter to exit...")
+				fmt.Scanln()
+			}
 			return
 		case 0x1B: // VK_ESCAPE
 			clearMenu(len(items))
@@ -121,7 +178,7 @@ func interactiveMenu() {
 
 func drawMenu(items []menuItem, selected int) {
 	for i := range items {
-		fmt.Print("\033[2K\r") // clear line, carriage return
+		fmt.Print("\033[2K\r")
 		if i == selected {
 			fmt.Printf("  > %s", items[i].label)
 		} else {
@@ -131,7 +188,6 @@ func drawMenu(items []menuItem, selected int) {
 			fmt.Print("\n")
 		}
 	}
-	// Move cursor back to first line
 	fmt.Printf("\033[%dA\r", len(items)-1)
 }
 

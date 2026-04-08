@@ -24,7 +24,7 @@ func install() {
 		key, _, err := registry.CreateKey(
 			registry.LOCAL_MACHINE,
 			ifeoPath+`\`+target,
-			registry.SET_VALUE,
+			registry.ALL_ACCESS,
 		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[install] Failed to create IFEO key for %s (run as admin): %v\n", target, err)
