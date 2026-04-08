@@ -27,12 +27,41 @@ type memoryStatusEx struct {
 }
 
 var (
-	procGlobalMemoryStatusEx = kernel32.NewProc("GlobalMemoryStatusEx")
-	procGetLargePageMinimum  = kernel32.NewProc("GetLargePageMinimum")
+	procGlobalMemoryStatusEx                = kernel32.NewProc("GlobalMemoryStatusEx")
+	procGetLargePageMinimum                 = kernel32.NewProc("GetLargePageMinimum")
+	procGetLogicalProcessorInformationEx    = kernel32.NewProc("GetLogicalProcessorInformationEx")
 )
 
+func physicalCores() int {
+	const relationProcessorCore = 0
+	var bufLen uint32
+	procGetLogicalProcessorInformationEx.Call(relationProcessorCore, 0, uintptr(unsafe.Pointer(&bufLen)))
+	if bufLen == 0 {
+		return runtime.NumCPU()
+	}
+	buf := make([]byte, bufLen)
+	ret, _, _ := procGetLogicalProcessorInformationEx.Call(
+		relationProcessorCore,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&bufLen)),
+	)
+	if ret == 0 {
+		return runtime.NumCPU()
+	}
+	cores := 0
+	for off := uint32(0); off < bufLen; {
+		size := *(*uint32)(unsafe.Pointer(&buf[off+4]))
+		cores++
+		off += size
+	}
+	if cores == 0 {
+		return runtime.NumCPU()
+	}
+	return cores
+}
+
 func detectSystem() SystemInfo {
-	info := SystemInfo{CPUCores: runtime.NumCPU()}
+	info := SystemInfo{CPUCores: physicalCores()}
 
 	var ms memoryStatusEx
 	ms.dwLength = uint32(unsafe.Sizeof(ms))
