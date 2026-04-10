@@ -2,6 +2,7 @@
 *.dll
 *.obj
 *.o
+*.syso
 
 wrapper/wrapper
 build/
