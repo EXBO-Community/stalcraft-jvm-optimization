@@ -1,0 +1,61 @@
+name: Auto Tag
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && (contains(github.event.pull_request.labels.*.name, 'release:patch') || contains(github.event.pull_request.labels.*.name, 'release:minor') || contains(github.event.pull_request.labels.*.name, 'release:major'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest
+        run: |
+          TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          echo "tag=${TAG:-v0.0.0}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version
+        id: bump
+        run: |
+          VERSION="${{ steps.latest.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          if ${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif ${{ contains(github.event.pull_request.labels.*.name, 'release:minor') }}; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          echo "version=v$MAJOR.$MINOR.$PATCH" >> "$GITHUB_OUTPUT"
+
+      - name: Build changelog
+        run: |
+          PREV="${{ steps.latest.outputs.tag }}"
+          NEW="${{ steps.bump.outputs.version }}"
+
+          {
+            echo "## What's Changed in $NEW"
+            echo ""
+            git log "$PREV"..HEAD --pretty=format:"- %s" --no-merges
+            echo ""
+            echo ""
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV...$NEW"
+          } > /tmp/changelog.md
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.bump.outputs.version }}" -F /tmp/changelog.md
+          git push origin "${{ steps.bump.outputs.version }}"
