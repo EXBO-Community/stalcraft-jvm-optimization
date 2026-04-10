@@ -8,6 +8,10 @@
 JVM wrapper for STALCRAFT. Automatically optimizes Java settings for your hardware for better performance.
 
 > **Note:** On systems with 8 GB of RAM or less, the wrapper does not inject flags — the default launcher settings are sufficient, and aggressive tuning on low memory can hurt performance.
+>
+> On systems with 16 GB RAM, it is recommended to enable the page file — the wrapper allocates part of memory for the heap, and without a page file the system may run low under heavy load.
+>
+> It is recommended to disable G-Sync / FreeSync in NVIDIA / AMD settings for STALCRAFT — adaptive sync can cause micro-stutters and unstable frametime when used with JVM.
 
 ## What it does
 
@@ -21,7 +25,7 @@ JVM wrapper for STALCRAFT. Automatically optimizes Java settings for your hardwa
 
 1. Download `wrapper.exe` from [Releases](../../releases)
 2. Place it anywhere
-3. Run as administrator
+3. Run it
 
 A menu will appear:
 
@@ -42,7 +46,7 @@ Both game versions are supported:
 
 ## Uninstall
 
-Run `wrapper.exe` as admin and select **Uninstall**.
+Run `wrapper.exe` and select **Uninstall**.
 
 ## Configuration
 
@@ -50,7 +54,9 @@ On first game launch, the wrapper auto-generates `configs/default.json` with opt
 
 ### Preset profiles
 
-The `configs/` folder includes ready-made profiles:
+> **Note:** Preset profiles are **examples** for reference, not universal solutions. They are not bundled with `wrapper.exe` — download them from [`configs/`](configs/) in this repository or from the [Releases](../../releases) page. In most cases, the auto-generated `default.json` will work better than a preset profile.
+
+The repository includes ready-made profiles:
 
 | Profile | Description |
 |---------|-------------|
