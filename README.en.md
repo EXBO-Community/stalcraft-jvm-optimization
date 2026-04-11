@@ -3,6 +3,11 @@
 [![eng](https://img.shields.io/badge/lang-English-blue)](README.en.md)
 [![ru](https://img.shields.io/badge/lang-Russian-blue)](README.md)
 
+> [!WARNING]
+> This project is an **unofficial** utility developed by [SilentBless](https://github.com/SilentBless).
+> The utility **is not affiliated with EXBO**, but has been verified by [GloomyFolken](https://github.com/GloomyFolken)
+> and classified as safe software.
+
 **A utility for modifying JVM startup parameters and optimizing its performance.**
 
 **JVM (Java Virtual Machine)** is the runtime environment through which [STALCRAFT: X](https://stalcraft.ru/) operates.
@@ -10,11 +15,6 @@
 The game code is executed not directly on the system, but inside a Java virtual machine. During execution, it compiles the code into machine code specific to your PC (JIT compilation). Essentially, this is an additional layer between the game and hardware that is responsible for executing the code and adapting it to the system.
 
 This program allows you to change JVM startup parameters to increase game performance, using both preset and custom JSON configuration files.
-
-> [!WARNING]
-> This project is an **unofficial** utility developed by [SilentBless](https://github.com/SilentBless).
-> The utility is not affiliated with EXBO, but has been verified by [GloomyFolken](https://github.com/GloomyFolken)
-> and classified as safe software.
 
 > [!IMPORTANT]
 > The utility does not modify JVM startup parameters for systems with 8 GB or less of RAM.
@@ -52,8 +52,9 @@ The wrapper is installed **once** and automatically runs each time the game is l
 ### Installation
 
 1. Add the game folder to Windows Defender exclusions or your antivirus software:
-   - Example for Steam: `C:\Program Files\Steam\steamapps\common\STALCRAFT`
-   - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
+    - Example for Steam: `C:\Program Files\Steam\steamapps\common\STALCRAFT`
+    - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
+    - Example for EGS: `C:\Games\EGS Stalcraft\STALCRAFT`
 2. Create a `jvm_wrapper` directory in the game folder.
 3. Download the [latest version](../../releases/latest) of `wrapper.exe` to the `jvm_wrapper` folder.
 4. Run the utility as administrator.
@@ -61,8 +62,12 @@ The wrapper is installed **once** and automatically runs each time the game is l
 
 **Now you can launch the game!**
 
-> [!NOTE]
-> The utility only applies to this specific game application using JVM.
+> [!IMPORTANT]
+> Several features of the utility:
+>
+> - Hardware G-Sync may cause image artifacts. It is recommended to disable it.
+> - The utility only applies to this specific game application using JVM.
+> - For systems with 16 GB or less of RAM, it is recommended to enable the swap.
 
 ### Uninstallation
 
