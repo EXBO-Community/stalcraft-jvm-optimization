@@ -1,0 +1,144 @@
+name: Отчёт об ошибке
+description: Сообщить о проблеме в работе утилиты
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт!
+
+        **Перед тем как продолжить**, откройте [документ по устранению неполадок](https://github.com/EXBO-Community/stalcraft-jvm-optimization/blob/master/docs/TROUBLESHOOTING.md) — возможно, решение вашей проблемы уже описано там. Почти все типичные ошибки (OS error 2, OS error 740, `Failed while waiting for launched game`, конфликты с антивирусами и оверлеями) разобраны пошагово.
+
+        Если документ не помог — заполните обязательные поля ниже.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Обязательные проверки
+      description: Подтвердите, что вы выполнили перечисленное. Issue нельзя отправить, пока не отмечены все обязательные пункты.
+      options:
+        - label: Я скачал последнюю версию `wrapper.zip` со страницы [Releases](https://github.com/EXBO-Community/stalcraft-jvm-optimization/releases/latest)
+          required: true
+        - label: Я добавил папку с игрой в исключения Защитника Windows или другого антивируса
+          required: true
+        - label: Я прочитал [документ по устранению неполадок](https://github.com/EXBO-Community/stalcraft-jvm-optimization/blob/master/docs/TROUBLESHOOTING.md) и моей проблемы там нет
+          required: true
+        - label: Я поискал похожие issue в этом репозитории и ничего подходящего не нашёл
+          required: true
+        - label: У меня включён файл подкачки Windows (актуально для систем с ОЗУ меньше 16 ГБ)
+          required: false
+
+  - type: input
+    id: wrapper-version
+    attributes:
+      label: Версия утилиты
+      description: Номер релиза `wrapper.zip`, который вы установили. Если не уверены — посмотрите в `jvm_wrapper/logs/wrapper.log`.
+      placeholder: "v1.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game-client
+    attributes:
+      label: Откуда запускаете игру
+      options:
+        - Лаунчер EXBO
+        - Steam
+        - Epic Games Store
+        - VK Play
+    validations:
+      required: true
+
+  - type: input
+    id: cpu
+    attributes:
+      label: Процессор
+      placeholder: "Intel Core i9-9900KF / AMD Ryzen 7 9800X3D"
+    validations:
+      required: true
+
+  - type: input
+    id: ram
+    attributes:
+      label: Объём и тип ОЗУ
+      placeholder: "32 ГБ DDR5-6000 CL30"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Версия Windows
+      placeholder: "Windows 11 23H2 / Windows 10 22H2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Что именно вы делали до того, как появилась проблема
+      placeholder: |
+        1. Установил утилиту через `cli.exe` → `Install`
+        2. Запустил игру из лаунчера EXBO
+        3. Через ~5 минут игры начались микрофризы в городе
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+      description: Что должно было произойти
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+      description: Что произошло на самом деле — симптомы, окна ошибок, зависания, сообщения анти-чита
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrapper-log
+    attributes:
+      label: Содержимое `jvm_wrapper/logs/wrapper.log`
+      description: |
+        Откройте файл и вставьте последние ~100 строк (или весь файл, если он небольшой).
+        Логи **не содержат личной информации** — путь пользователя автоматически маскируется до `<user>`, аргументы лаунчера и JVM-флаги не пишутся.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: jvm-log
+    attributes:
+      label: Содержимое `jvm_wrapper/logs/jvm.log`
+      description: |
+        Файл может быть большим — проще всего перетащить его мышкой прямо в это поле (drag-and-drop), GitHub сам приложит его к issue.
+
+        Если лог огромен и drag-and-drop не работает — выложите его в [Gist](https://gist.github.com) и оставьте ссылку.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Активный профиль конфигурации
+      description: |
+        Содержимое JSON-файла из `jvm_wrapper/configs/`, который у вас сейчас выбран как активный. Чаще всего это `default.json`.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Дополнительная информация
+      description: Скриншоты, видео, замечания — всё что считаете нужным приложить.
+    validations:
+      required: false

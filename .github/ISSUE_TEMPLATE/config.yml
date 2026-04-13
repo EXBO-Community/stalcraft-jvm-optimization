@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос по игре STALCRAFT
+    url: https://stalcraft.net/support
+    about: По вопросам самой игры обращайтесь в официальную поддержку EXBO — здесь мы занимаемся только утилитой.
+  - name: Большой файл jvm.log
+    url: https://gist.github.com
+    about: Если ваш jvm.log слишком большой, чтобы приложить его через drag-and-drop, создайте публичный Gist и вставьте ссылку в issue.

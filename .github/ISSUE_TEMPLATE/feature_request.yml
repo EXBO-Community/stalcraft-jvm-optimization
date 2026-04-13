@@ -1,0 +1,43 @@
+name: Предложение улучшения
+description: Предложить новую функцию или улучшение утилиты
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за предложение! Опишите что вы хотите добавить или изменить в утилите — чем подробнее, тем лучше.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решает это предложение
+      description: Опишите ситуацию, в которой вам не хватает функциональности.
+      placeholder: "Сейчас я не могу ... поэтому ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+      description: Как, по вашему мнению, это должно работать.
+      placeholder: "Хотелось бы видеть в меню пункт, который ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативные решения
+      description: Какие ещё варианты вы рассматривали или пробовали (если применимо).
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительный контекст
+      description: Скриншоты, примеры, ссылки на похожие решения в других проектах.
+    validations:
+      required: false
