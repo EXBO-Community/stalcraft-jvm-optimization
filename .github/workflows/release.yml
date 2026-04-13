@@ -31,33 +31,31 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install go-winres
-        run: go install github.com/tc-hib/go-winres@latest
+        run: go install github.com/tc-hib/go-winres@v0.3.3
 
       - name: Patch version from tag
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          VERSION="${VERSION%%-*}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          MAJOR="${MAJOR:-0}" MINOR="${MINOR:-0}" PATCH="${PATCH:-0}"
-          FILE_VER="$MAJOR.$MINOR.$PATCH.0"
+          $tag    = $env:GITHUB_REF_NAME -replace '^v', ''
+          $semver = $tag -replace '-.*$', ''
+          $parts  = $semver.Split('.') + @('0','0','0')
+          $fileVer = "$($parts[0]).$($parts[1]).$($parts[2]).0"
 
-          python3 -c "
-          import json, sys
-          with open('winres/winres.json', 'r') as f:
-              data = json.load(f)
-          data['RT_MANIFEST']['#1']['0409']['identity']['version'] = '$FILE_VER'
-          data['RT_VERSION']['#1']['0000']['fixed']['file_version'] = '$FILE_VER'
-          data['RT_VERSION']['#1']['0000']['fixed']['product_version'] = '$FILE_VER'
-          data['RT_VERSION']['#1']['0000']['info']['0409']['FileVersion'] = '$VERSION'
-          data['RT_VERSION']['#1']['0000']['info']['0409']['ProductVersion'] = '$VERSION'
-          with open('winres/winres.json', 'w') as f:
-              json.dump(data, f, indent=2)
-          "
+          $json = Get-Content winres/winres.json -Raw | ConvertFrom-Json -Depth 32
+          $json.RT_MANIFEST.'#1'.'0409'.identity.version       = $fileVer
+          $json.RT_VERSION.'#1'.'0000'.fixed.file_version      = $fileVer
+          $json.RT_VERSION.'#1'.'0000'.fixed.product_version   = $fileVer
+          $json.RT_VERSION.'#1'.'0000'.info.'0409'.FileVersion    = $semver
+          $json.RT_VERSION.'#1'.'0000'.info.'0409'.ProductVersion = $semver
+          $json | ConvertTo-Json -Depth 32 | Set-Content winres/winres.json -Encoding UTF8
 
       - name: Embed version info into both binaries
         shell: bash
         run: |
+          # go-winres emits rsrc_windows_amd64.syso in CWD from winres/winres.json.
+          # Go auto-includes .syso files sitting in the same directory as the
+          # main package, so copy the generated resource into each cmd/<name>/
+          # to stamp both binaries with the shared icon and VERSIONINFO block.
           go-winres make
           cp rsrc_windows_amd64.syso cmd/cli/
           cp rsrc_windows_amd64.syso cmd/service/

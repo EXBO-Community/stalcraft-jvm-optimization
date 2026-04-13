@@ -44,13 +44,24 @@ jobs:
           PREV="${{ steps.latest.outputs.tag }}"
           NEW="${{ steps.bump.outputs.version }}"
 
+          # First-release fallback: if PREV is the synthetic v0.0.0 sentinel
+          # (no real tag exists yet) log everything from the repository root
+          # and link to the commit list instead of a compare view.
+          if git rev-parse -q --verify "refs/tags/$PREV" >/dev/null; then
+            RANGE="$PREV..HEAD"
+            COMPARE="https://github.com/${{ github.repository }}/compare/$PREV...$NEW"
+          else
+            RANGE="HEAD"
+            COMPARE="https://github.com/${{ github.repository }}/commits/$NEW"
+          fi
+
           {
             echo "## What's Changed in $NEW"
             echo ""
-            git log "$PREV"..HEAD --pretty=format:"- %s" --no-merges
+            git log $RANGE --pretty=format:"- %s" --no-merges
             echo ""
             echo ""
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV...$NEW"
+            echo "**Full Changelog**: $COMPARE"
           } > /tmp/changelog.md
 
       - name: Create tag
