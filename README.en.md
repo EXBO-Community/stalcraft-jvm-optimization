@@ -8,6 +8,11 @@
 > The utility **is not affiliated with EXBO**, but has been verified by [GloomyFolken](https://github.com/GloomyFolken)
 > and classified as safe software.
 
+> [!CAUTION]
+> If you run into problems after installing this utility, **open the [troubleshooting document](./docs/TROUBLESHOOTING.en.md)** and find your situation there. Every common issue and its fix is documented step by step.
+>
+> Please **do not bother EXBO moderators or the game's technical support** with issues related to this utility. They are regular people just like you, and they have no idea what is happening on your computer. Everything you need is in the document linked above — read it before reaching out to anyone.
+
 **A utility for modifying JVM startup parameters and optimizing its performance.**
 
 **JVM (Java Virtual Machine)** is the runtime environment through which [STALCRAFT: X](https://stalcraft.net/) operates.
