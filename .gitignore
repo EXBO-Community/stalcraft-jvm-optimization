@@ -18,5 +18,3 @@ __debug_bin*
 
 .env
 *.log
-
-docs/
