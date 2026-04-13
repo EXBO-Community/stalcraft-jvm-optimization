@@ -43,7 +43,14 @@ func Generate(sys sysinfo.Info) Config {
 		newSizePercent = 30
 		mixedCountTarget = 4
 		softRefMs = 50
-		if sys.CPUCores >= 8 {
+		// Extra concurrent worker only if the OS exposes at least 16
+		// logical threads. The naive "cores >= 8" check fires on a
+		// 5800X3D / 7800X3D running in "gaming mode" with SMT disabled
+		// (8C/8T) and pushes concurrent to 4 — that's 50 % of the CPU
+		// taken from the game during marking. Requiring 16+ threads
+		// guarantees at least one HT sibling pool to absorb the extra
+		// worker without starving the render thread.
+		if sys.CPUThreads >= 16 {
 			concurrent++
 		}
 	}
