@@ -4,7 +4,6 @@
 *.o
 *.syso
 
-wrapper/wrapper
 build/
 
 __debug_bin*

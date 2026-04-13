@@ -10,16 +10,17 @@
 
 **A utility for modifying JVM startup parameters and optimizing its performance.**
 
-**JVM (Java Virtual Machine)** is the runtime environment through which [STALCRAFT: X](https://stalcraft.ru/) operates.
+**JVM (Java Virtual Machine)** is the runtime environment through which [STALCRAFT: X](https://stalcraft.net/) operates.
 
 The game code is executed not directly on the system, but inside a Java virtual machine. During execution, it compiles the code into machine code specific to your PC (JIT compilation). Essentially, this is an additional layer between the game and hardware that is responsible for executing the code and adapting it to the system.
 
 This program allows you to change JVM startup parameters to increase game performance, using both preset and custom JSON configuration files.
 
 > [!IMPORTANT]
-> The utility does not modify JVM startup parameters for systems with 8 GB or less of RAM.
-> Aggressive optimization with limited memory can harm your PC.
-> Instead, use the standard settings from the EXBO launcher.
+> The utility tunes JVM parameters for any amount of RAM starting from 8 GB.
+> On systems with less RAM the generated `default.json` uses a minimally safe heap,
+> but stable gameplay is not guaranteed — prefer upgrading your RAM or sticking with
+> the stock EXBO launcher settings.
 
 [![Downloads](https://img.shields.io/github/downloads/EXBO-Community/stalcraft-jvm-optimization/total?label=Downloads&color=green)](../../releases)
 [![Latest Release](https://img.shields.io/github/v/release/EXBO-Community/stalcraft-jvm-optimization?label=Latest)](../../releases/latest)
@@ -28,12 +29,17 @@ This program allows you to change JVM startup parameters to increase game perfor
 
 ## Changes Made
 
-The utility (wrapper) intercepts the startup of the game process `stalcraft.exe` (launcher) or `stalcraftw.exe` (Steam) to:
+The utility ships as two binaries that must live in the same directory:
+
+- **`cli.exe`** — the interactive menu for installing, removing and managing configurations. The user only launches this when they need to change something.
+- **`service.exe`** — the silent interceptor that Windows spawns automatically when the game starts. It has no UI, and you never run it by hand.
+
+`service.exe` intercepts the startup of the game process `stalcraft.exe` (launcher) or `stalcraftw.exe` (Steam) to:
 
 - **Select optimal JVM configuration:** allocated resources volume, Garbage Collector (GC) mode, and JIT compilation mode.
 - **Increase game process priority:** the process runs with higher priority compared to other processes.
 
-The wrapper is installed **once** and automatically runs each time the game is launched.
+The utility is installed **once** and automatically runs each time the game is launched.
 
 > [!IMPORTANT]
 > Game files are not affected or modified.
@@ -42,10 +48,10 @@ The wrapper is installed **once** and automatically runs each time the game is l
 ## System Requirements
 
 - **Operating System:** Windows 10/11
-- **Game Version:** Steam/Launcher/EGS
-- **OS Rights:** administrator privileges in Windows
+- **Game Version:** Steam/Launcher/EGS/VK Play
+- **OS Rights:** administrator privileges in Windows (only required during install/uninstall)
 - **CPU:** 4 or more cores
-- **RAM:** 12+ GB
+- **RAM:** 8+ GB, 12+ GB recommended (below 12 GB some optimizations such as `PreTouch` stay disabled)
 
 ## Using the Utility
 
@@ -55,27 +61,26 @@ The wrapper is installed **once** and automatically runs each time the game is l
     - Example for Steam: `C:\Program Files\Steam\steamapps\common\STALCRAFT`
     - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
     - Example for EGS: `C:\Games\EGS Stalcraft\STALCRAFT`
-2. Create a `jvm_wrapper` directory in the game folder.
-3. Download the [latest version](../../releases/latest) of `wrapper.exe` to the `jvm_wrapper` folder.
-4. Run the utility as administrator.
-5. In the menu that appears, select `Install` using the arrow keys and press **Enter**.
+2. Create a `jvm_wrapper` directory inside the game folder.
+3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and an `examples/` directory inside.
+4. Run `cli.exe`, select `Install` in the menu using the arrow keys and press **Enter**.
+5. A UAC prompt will appear — accept it. This is expected: the IFEO hook is written to `HKLM` which requires administrator privileges.
 
 **Now you can launch the game!**
 
 > [!IMPORTANT]
-> Several features of the utility:
+> A few notes on how the utility behaves:
 >
-> - Hardware G-Sync may cause image artifacts. It is recommended to disable it.
-> - The utility only applies to this specific game application using JVM.
-> - For systems with 16 GB or less of RAM, it is recommended to enable the swap.
+> - Hardware G-Sync may cause image artifacts. Disabling it is recommended.
+> - The utility only applies to STALCRAFT and does not touch other JVM applications.
+> - On systems with 8-16 GB of RAM, it is recommended to keep the Windows page file enabled.
 
 ### Uninstallation
 
-1. Run the utility as administrator.
-2. In the menu that appears, select `Uninstall` using the arrow keys and press **Enter**.
-3. Navigate to the game folder.
-4. Delete the `jvm_wrapper` folder.
-5. Restart the game if it is running.
+1. Run `cli.exe`, select `Uninstall` in the menu using the arrow keys and press **Enter**.
+2. Navigate to the game folder.
+3. Delete the `jvm_wrapper` folder.
+4. Restart the game if it is running.
 
 ### Configuration
 
@@ -88,32 +93,22 @@ This profile will be adapted to your computer's parameters, but its existence do
 
 You can change the launch configuration yourself. To do this:
 
-1. Run the utility as administrator.
-2. In the menu that appears, select `Select Config` using the arrow keys and press **Enter**.
-3. Select the desired configuration file and press **Enter**.
-4. Restart the game if it is running.
+1. Run `cli.exe`, select `Select Config` in the menu using the arrow keys and press **Enter**.
+2. Select the desired configuration file and press **Enter**.
+3. Restart the game if it is running.
 
 > [!NOTE]
-> By default, only the `default.json` configuration is available, but it is *not* the only option.
-> The sections [Configuration Presets](#configuration-presets) and [Custom Configuration](#custom-configuration)
-> provide the necessary instructions.
+> By default only the `default.json` configuration is available, but it is *not* the only option.
+> See the [Example configurations](#example-configurations) and [Custom configuration](#custom-configuration)
+> sections below for instructions.
 
-#### Configuration Presets
+#### Example configurations
 
-The utility repository includes ready-made configuration presets for PCs with different specifications.
-Below is a descriptive table for each preset:
+The repository currently ships one example — `examples/8khz.json`, targeted at high-end systems (8+ cores, 32 GB RAM) running 8 kHz mice. It prioritizes minimal STW pauses and predictable frame time at the cost of a small amount of throughput.
 
-| Profile       | Requirements                 | Description                                                                                                                                                                         |
-| ------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `weak.json`   | CPU: 4+ cores<br>RAM: ~8-12 GB | Profile for "weak segment" PCs. If your PC is not a "potato", but still fairly weak, this might work for you.                                                                        |
-| `medium.json` | CPU: 6+ cores<br>RAM: ~16 GB   | Balanced profile for "mid-range segment" PCs. Suitable for most modern systems.                                                                                                        |
-| `max.json`    | CPU: 8+ cores<br>RAM: ~32+ GB  | Profile for "high-performance segment" PCs. Suitable for maximum JVM performance while maintaining stable operation within STALCRAFT: X.                                              |
+To use an example, browse the [`/examples`](./examples/) directory in this repository, download the `.json` you want and drop it into `jvm_wrapper/configs/`.
 
-To use any of the presets, navigate to the repository [`/configs`](./configs/) folder,
-from where you can download the profile you're interested in to the `jvm_wrapper/configs` folder.
-
-Run the utility, select `Select Config` in the menu. Now, in addition to `default.json`, another
-configuration profile should appear in the list. Select it, then restart the game.
+Then run the utility, pick `Select Config` in the menu. A new profile should appear alongside `default.json` — select it, then restart the game.
 
 #### Custom Configuration
 
@@ -138,27 +133,35 @@ on configuration parameters.
 
 ## Additional Information
 
+### Logging
+
+Both binaries write structured logs into `jvm_wrapper/logs/` next to `cli.exe` and `service.exe`:
+
+- **`logs/wrapper.log`** — wrapper events: startup, hardware detection, config load, game process spawn, exit code. User profile paths are redacted to `<user>`, raw launcher arguments and JVM flags are never written. The file is truncated once it exceeds 2 MB.
+- **`logs/jvm.log`** — [JDK 9 unified logging](https://openjdk.org/jeps/158): GC pauses, every STW safepoint, JIT compilation, deoptimization, metaspace and code cache events. 3 rotated files of 10 MB each, up to 30 MB on disk total. Used to diagnose the root cause of microfreezes.
+
+If you run into a problem and want to report it, attach both files from `jvm_wrapper/logs/` to your GitHub issue. They contain no personal information and are safe to publish.
+
 ### Large Pages
 
-**Large Pages** is a virtual memory mode in which larger pages are used than the standard 4 KB.
+**Large Pages** is a virtual memory mode where larger pages are used instead of the standard 4 KB.
 
-Enabling Large Pages reduces memory access overhead, making GC and heap access more stable and faster.
-This happens because the CPU doesn't directly access your RAM. The CPU uses TLB (Translation Lookaside Buffer).
+Enabling Large Pages reduces memory access overhead, making GC and heap access smoother and faster. The CPU does not access RAM directly — it goes through the TLB (Translation Lookaside Buffer); fewer TLB misses mean higher throughput.
 
 > [!CAUTION]
 > Large Pages lock memory to the application and prevent the system from reallocating it.
 > Incorrect configuration can lead to unstable OS operation. Be aware of your actions!
 > Make sure that the allocated memory in your configuration profile does not exceed 40%-50% of total RAM,
-> and that you have at least 16+ GB of free RAM.
+> and that you have at least 16+ GB of RAM.
 
 To enable Large Pages, follow these steps:
 
-1. Press `win` + `R`.
+1. Press `Win` + `R`.
 2. Type `secpol.msc` and press `Enter`.
 3. Navigate to *Local Policies → User Rights Assignment*.
 4. Find the *"Lock pages in memory"* policy.
-5. Open the policy by double-clicking it, add your user or the "Administrators" group.
-6. Apply the changes and restart your PC.
+5. Double-click it and add your user account or the "Administrators" group.
+6. Apply the changes and log out / log back in for the policy to take effect.
 
 ### Technical Information
 
