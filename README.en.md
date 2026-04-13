@@ -62,17 +62,16 @@ The utility is installed **once** and automatically runs each time the game is l
 
 ### Installation
 
+> [!TIP]
+> The most common mistake during install is dropping `jvm_wrapper` somewhere deep inside `runtime/stalcraft/...`. The folder must sit **at the root of the EXBO directory**, next to `ExboLink.exe` and the `runtime/` directory. Here's what it should look like:
+>
+> ![Example of where the jvm_wrapper folder belongs at the root of the EXBO launcher directory](./docs/assets/install-folder-location.jpg)
+
 1. Add the game folder to Windows Defender exclusions or your antivirus software:
     - Example for Steam: `C:\Program Files\Steam\steamapps\common\STALCRAFT`
     - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
     - Example for EGS: `C:\Games\EGS Stalcraft\STALCRAFT`
-2. Create a `jvm_wrapper` directory at the **root of the launcher folder**. For the EXBO launcher that's `C:\Users\<your-name>\AppData\Roaming\EXBO\jvm_wrapper` — sitting next to `ExboLink.exe` and the `runtime/` directory, **not** somewhere deeper inside `runtime/stalcraft/...`.
-
-   > [!TIP]
-   > If you're unsure where exactly to put it, here's what it should look like:
-   >
-   > ![Example of where the jvm_wrapper folder belongs at the root of the EXBO launcher directory](./docs/assets/install-folder-location.jpg)
-
+2. Create the `jvm_wrapper` directory at the root of the launcher folder (see the tip above).
 3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and an `examples/` directory inside.
 4. Run `cli.exe`, select `Install` in the menu using the arrow keys and press **Enter**.
 5. A UAC prompt will appear — accept it. This is expected: the IFEO hook is written to `HKLM` which requires administrator privileges.
