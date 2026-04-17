@@ -17,3 +17,6 @@ __debug_bin*
 
 .env
 *.log
+
+mempalace.yaml
+entities.json
