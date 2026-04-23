@@ -198,7 +198,7 @@ func physicalCores() int {
 var (
 	procOpenProcessToken      = winapi.Advapi32.NewProc("OpenProcessToken")
 	procLookupPrivilegeValueW = winapi.Advapi32.NewProc("LookupPrivilegeValueW")
-	procPrivilegeCheck        = winapi.Advapi32.NewProc("PrivilegeCheck")
+	procGetTokenInformation   = winapi.Advapi32.NewProc("GetTokenInformation")
 )
 
 type luid struct {
@@ -211,14 +211,12 @@ type luidAndAttributes struct {
 	Attributes uint32
 }
 
-type privilegeSet struct {
-	PrivilegeCount uint32
-	Control        uint32
-	Privilege      [1]luidAndAttributes
-}
-
-// hasLargePagePrivilege probes SeLockMemoryPrivilege on the current token.
-// Required to use -XX:+UseLargePages without it JVM silently degrades.
+// hasLargePagePrivilege reports whether SeLockMemoryPrivilege is assigned to
+// the current process token (enabled or disabled). The JVM enables it via
+// AdjustTokenPrivileges on startup; we only need to confirm it is present.
+// PrivilegeCheck(SE_PRIVILEGE_ENABLED) was wrong: the privilege is assigned
+// but disabled in the token by default, causing false negatives for users who
+// had correctly configured it in Local Security Policy.
 func hasLargePagePrivilege() bool {
 	proc, err := syscall.GetCurrentProcess()
 	if err != nil {
@@ -239,13 +237,32 @@ func hasLargePagePrivilege() bool {
 		return false
 	}
 
-	ps := privilegeSet{
-		PrivilegeCount: 1,
-		Privilege:      [1]luidAndAttributes{{Luid: id, Attributes: 0x00000002}},
+	// First call: get required buffer size.
+	const tokenPrivileges = 3
+	var needed uint32
+	procGetTokenInformation.Call(uintptr(token), tokenPrivileges, 0, 0, uintptr(unsafe.Pointer(&needed)))
+	if needed == 0 {
+		return false
 	}
-	var result int32
-	ret, _, _ := procPrivilegeCheck.Call(uintptr(token), uintptr(unsafe.Pointer(&ps)), uintptr(unsafe.Pointer(&result)))
-	return ret != 0 && result != 0
+
+	buf := make([]byte, needed)
+	if ret, _, _ := procGetTokenInformation.Call(
+		uintptr(token), tokenPrivileges,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(needed),
+		uintptr(unsafe.Pointer(&needed)),
+	); ret == 0 {
+		return false
+	}
+
+	count := *(*uint32)(unsafe.Pointer(&buf[0]))
+	const laSize = 12 // sizeof(LUID_AND_ATTRIBUTES): 8 (LUID) + 4 (Attributes)
+	for i := uint32(0); i < count; i++ {
+		la := (*luidAndAttributes)(unsafe.Pointer(&buf[4+i*laSize]))
+		if la.Luid == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Describe returns a single-line human summary, used in the interactive menu.

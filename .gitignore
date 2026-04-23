@@ -20,3 +20,5 @@ __debug_bin*
 
 mempalace.yaml
 entities.json
+
+.DS_Store
