@@ -25,7 +25,12 @@ type Info struct {
 	// L3CacheMB is the largest unified L3 cache reported by Windows. On
 	// multi-CCD CPUs (e.g. 5950X) this is the per-CCD size, not the sum,
 	// since a hot thread only benefits from its own CCD's cache.
-	L3CacheMB     int
+	L3CacheMB int
+	// MemSpeedMTs is the highest ConfiguredMemoryClockSpeed reported
+	// across populated DIMMs, in MT/s. Zero means the SMBIOS probe
+	// failed or no DIMM is populated; the caller should treat that as
+	// "unknown" and fall back to the mid memory tier.
+	MemSpeedMTs   int
 	LargePages    bool
 	LargePageSize uint64
 }
@@ -39,6 +44,46 @@ func (i Info) FreeGB() uint64      { return i.FreeRAM >> 30 }
 // per CCD). The threshold is chosen so non-3D dual-CCD parts do not
 // trigger big-cache tuning (their effective per-CCD cache is 32 MB).
 func (i Info) HasBigCache() bool { return i.L3CacheMB >= 64 }
+
+// MemTier classifies ConfiguredMemoryClockSpeed into two bandwidth
+// bands that the G1 tuning profile keys off:
+//
+//   - slow covers stock DDR4 at SPD defaults on H-chipset boards
+//     where XMP is unavailable (2133 / 2400 / 2666 MT/s).
+//   - mid  covers everything faster — XMP-enabled DDR4 and all DDR5.
+//
+// An earlier revision split mid from a fast tier (≥ 4800 MT/s) that
+// ran a tighter pause target (80 ms) and a higher mixed-GC count (8),
+// under the assumption that DDR5 bandwidth could absorb more
+// aggressive tuning. A 9800X3D + DDR5-6200 tester reproduced periodic
+// freezes on fast-tier values while the mid-tier profile from a
+// DDR4-3600 rig ran smoothly on the same hardware. Fast tier was
+// removed; DDR5 parts now run the same profile as mid-tier DDR4.
+//
+// When the SMBIOS probe fails and MemSpeedMTs is zero, MemMid is
+// returned as a conservative fallback.
+type MemTier int
+
+const (
+	MemSlow MemTier = iota
+	MemMid
+)
+
+// MemTier returns the bandwidth tier for this system's memory.
+func (i Info) MemTier() MemTier {
+	if i.MemSpeedMTs > 0 && i.MemSpeedMTs <= 2933 {
+		return MemSlow
+	}
+	return MemMid
+}
+
+// String gives a short label suitable for debug and menu output.
+func (t MemTier) String() string {
+	if t == MemSlow {
+		return "slow"
+	}
+	return "mid"
+}
 
 var (
 	procGlobalMemoryStatusEx             = winapi.Kernel32.NewProc("GlobalMemoryStatusEx")
@@ -63,9 +108,10 @@ type memoryStatusEx struct {
 // the caller can still size the JVM.
 func Detect() Info {
 	info := Info{
-		CPUCores:   physicalCores(),
-		CPUThreads: runtime.NumCPU(),
-		L3CacheMB:  detectL3CacheMB(),
+		CPUCores:    physicalCores(),
+		CPUThreads:  runtime.NumCPU(),
+		L3CacheMB:   detectL3CacheMB(),
+		MemSpeedMTs: detectMemSpeedMTs(),
 	}
 
 	var ms memoryStatusEx
@@ -152,7 +198,7 @@ func physicalCores() int {
 var (
 	procOpenProcessToken      = winapi.Advapi32.NewProc("OpenProcessToken")
 	procLookupPrivilegeValueW = winapi.Advapi32.NewProc("LookupPrivilegeValueW")
-	procPrivilegeCheck        = winapi.Advapi32.NewProc("PrivilegeCheck")
+	procGetTokenInformation   = winapi.Advapi32.NewProc("GetTokenInformation")
 )
 
 type luid struct {
@@ -165,14 +211,12 @@ type luidAndAttributes struct {
 	Attributes uint32
 }
 
-type privilegeSet struct {
-	PrivilegeCount uint32
-	Control        uint32
-	Privilege      [1]luidAndAttributes
-}
-
-// hasLargePagePrivilege probes SeLockMemoryPrivilege on the current token.
-// Required to use -XX:+UseLargePages without it JVM silently degrades.
+// hasLargePagePrivilege reports whether SeLockMemoryPrivilege is assigned to
+// the current process token (enabled or disabled). The JVM enables it via
+// AdjustTokenPrivileges on startup; we only need to confirm it is present.
+// PrivilegeCheck(SE_PRIVILEGE_ENABLED) was wrong: the privilege is assigned
+// but disabled in the token by default, causing false negatives for users who
+// had correctly configured it in Local Security Policy.
 func hasLargePagePrivilege() bool {
 	proc, err := syscall.GetCurrentProcess()
 	if err != nil {
@@ -193,13 +237,32 @@ func hasLargePagePrivilege() bool {
 		return false
 	}
 
-	ps := privilegeSet{
-		PrivilegeCount: 1,
-		Privilege:      [1]luidAndAttributes{{Luid: id, Attributes: 0x00000002}},
+	// First call: get required buffer size.
+	const tokenPrivileges = 3
+	var needed uint32
+	procGetTokenInformation.Call(uintptr(token), tokenPrivileges, 0, 0, uintptr(unsafe.Pointer(&needed)))
+	if needed == 0 {
+		return false
 	}
-	var result int32
-	ret, _, _ := procPrivilegeCheck.Call(uintptr(token), uintptr(unsafe.Pointer(&ps)), uintptr(unsafe.Pointer(&result)))
-	return ret != 0 && result != 0
+
+	buf := make([]byte, needed)
+	if ret, _, _ := procGetTokenInformation.Call(
+		uintptr(token), tokenPrivileges,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(needed),
+		uintptr(unsafe.Pointer(&needed)),
+	); ret == 0 {
+		return false
+	}
+
+	count := *(*uint32)(unsafe.Pointer(&buf[0]))
+	const laSize = 12 // sizeof(LUID_AND_ATTRIBUTES): 8 (LUID) + 4 (Attributes)
+	for i := uint32(0); i < count; i++ {
+		la := (*luidAndAttributes)(unsafe.Pointer(&buf[4+i*laSize]))
+		if la.Luid == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Describe returns a single-line human summary, used in the interactive menu.
@@ -207,6 +270,11 @@ func (i Info) Describe() string {
 	s := fmt.Sprintf("%d cores, %.1f GB RAM (%.1f GB free)", i.CPUCores, i.TotalRAMGB(), i.FreeRAMGB())
 	if i.L3CacheMB > 0 {
 		s += fmt.Sprintf(", L3 %d MB", i.L3CacheMB)
+	}
+	if i.MemSpeedMTs > 0 {
+		s += fmt.Sprintf(", %d MT/s (%s tier)", i.MemSpeedMTs, i.MemTier())
+	} else {
+		s += fmt.Sprintf(", mem speed unknown (%s tier fallback)", i.MemTier())
 	}
 	if i.LargePages {
 		s += ", large pages available"

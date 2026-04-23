@@ -16,16 +16,15 @@ func Flags(cfg config.Config) []string {
 		cc = 256
 	}
 
-	// Xms tracks STALCRAFT's real peak working set (~4 GB) while Xmx
-	// keeps the spare address space from sizeHeap as headroom. PreTouch
-	// warms Xms pages, so the hot path never faults.
-	xms := cfg.HeapSizeGB
-	if xms > 4 {
-		xms = 4
-	}
+	// Xms == Xmx: commit the whole heap up front. Combined with
+	// AlwaysPreTouch this warms every page before the game starts,
+	// so mid-session allocation never triggers a commit / fault /
+	// zero-fill stall. sizeHeap already caps the maximum at 6 GB,
+	// well above STALCRAFT's ~2-3 GB working set, so the cost of
+	// pre-committing the full range is paid once at startup.
 	flags := []string{
 		fmt.Sprintf("-Xmx%dg", cfg.HeapSizeGB),
-		fmt.Sprintf("-Xms%dg", xms),
+		fmt.Sprintf("-Xms%dg", cfg.HeapSizeGB),
 
 		fmt.Sprintf("-XX:MetaspaceSize=%dm", cfg.MetaspaceMB),
 		fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", cfg.MetaspaceMB),

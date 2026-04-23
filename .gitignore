@@ -17,3 +17,8 @@ __debug_bin*
 
 .env
 *.log
+
+mempalace.yaml
+entities.json
+
+.DS_Store
