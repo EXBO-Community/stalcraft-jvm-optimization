@@ -1,6 +1,7 @@
 // Command service is the IFEO Debugger binary. Windows spawns it with
-// "stalcraft.exe <args>..." whenever the game launcher tries to start
-// the real executable; service.exe then replaces the JVM flags with a
+// "stalzone.exe <args>..." — or the still-current "stalcraft.exe" — when
+// the game launcher tries to start the real executable; service.exe then
+// replaces the JVM flags with a
 // tuned profile, starts the game via NtCreateUserProcess (bypassing
 // its own IFEO hook), boosts priorities and waits until the game
 // window is visible.

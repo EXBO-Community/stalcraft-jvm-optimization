@@ -5,14 +5,14 @@
 The project ships two binaries that must live in the same directory:
 
 - `cli.exe` — user-facing entry point. Interactive menu, install/uninstall of the IFEO hook, status checks, config management.
-- `service.exe` — silent interceptor. Registered as the IFEO `Debugger` for `stalcraft.exe` / `stalcraftw.exe` and spawned by Windows automatically when the game launches. Has no UI.
+- `service.exe` — silent interceptor. Registered as the IFEO `Debugger` for `stalzone.exe` / `stalzonew.exe` (and the legacy `stalcraft.exe` / `stalcraftw.exe`) and spawned by Windows automatically when the game launches. Has no UI.
 
 On install, `cli.exe` writes the path to `service.exe` (not itself) into the registry. The split keeps the Windows → game path running through a minimal UI-free binary while all management stays in a separate `cli.exe`.
 
 ## Operating Mechanism
 
 The wrapper uses the IFEO (Image File Execution Options) mechanism to intercept game startup.
-When `stalcraft.exe` or `stalcraftw.exe` is launched, Windows starts `service.exe` instead, passing it the original launcher arguments. `service.exe` then:
+When `stalzone.exe` / `stalzonew.exe` (or the still-current `stalcraft.exe` / `stalcraftw.exe`) is launched, Windows starts `service.exe` instead, passing it the original launcher arguments. `service.exe` then:
 
 1. Loads the active configuration file from the `configs/` directory next to the executable.
 2. Strips conflicting flags from the original launcher arguments and injects hardware-tuned JVM flags.
@@ -24,7 +24,7 @@ When `stalcraft.exe` or `stalcraftw.exe` is launched, Windows starts `service.ex
 
 Both binaries write structured logs into `logs/wrapper.log` next to the executable: startup, hardware detection, config load, game process spawn, exit code. User profile paths are redacted, raw launcher arguments and JVM flags are never logged. The file is truncated once it exceeds 2 MB.
 
-There is no separate JVM/GC log file — STALCRAFT bundles a custom OpenJDK 9 build whose CLI parsers for `-Xlog` and `-Xloggc` have been stripped, so unified logging cannot be directed to a file. `wrapper.log` is enough for the vast majority of support cases.
+There is no separate JVM/GC log file — STALZONE bundles a custom OpenJDK 9 build whose CLI parsers for `-Xlog` and `-Xloggc` have been stripped, so unified logging cannot be directed to a file. `wrapper.log` is enough for the vast majority of support cases.
 
 ## CLI Interaction
 

@@ -1,5 +1,5 @@
 // Package jvm turns a config.Config into the JVM command-line flags
-// STALCRAFT expects, and filters out any conflicting flags the game
+// STALZONE expects, and filters out any conflicting flags the game
 // launcher already supplied.
 package jvm
 
@@ -20,7 +20,7 @@ func Flags(cfg config.Config) []string {
 	// AlwaysPreTouch this warms every page before the game starts,
 	// so mid-session allocation never triggers a commit / fault /
 	// zero-fill stall. sizeHeap already caps the maximum at 6 GB,
-	// well above STALCRAFT's ~2-3 GB working set, so the cost of
+	// well above STALZONE's ~2-3 GB working set, so the cost of
 	// pre-committing the full range is paid once at startup.
 	flags := []string{
 		fmt.Sprintf("-Xmx%dg", cfg.HeapSizeGB),
