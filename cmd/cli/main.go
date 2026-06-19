@@ -1,4 +1,4 @@
-// Command cli is the user-facing entry point of the STALCRAFT JVM
+// Command cli is the user-facing entry point of the STALZONE JVM
 // optimization wrapper. It renders the interactive menu and handles
 // the install/uninstall/status CLI flags. The actual IFEO Debugger
 // that hooks the game launch lives in the sibling binary service.exe.
