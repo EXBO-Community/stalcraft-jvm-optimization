@@ -35,7 +35,7 @@ Errors shown by the game's anti-cheat at launch are usually a re-wrapping of ord
 
 **What happened.** Someone — usually the user themselves, out of habit of "run everything as admin" — ticked the **"Run this program as an administrator"** checkbox in `service.exe`'s file properties. After that Windows asks for UAC elevation on every launch. But when the game launcher tries to start the game, there is nobody to show the UAC prompt to: the launcher runs as a regular user and cannot grant elevation to a child process. Windows returns error 740, the anti-cheat picks it up and surfaces it to the player.
 
-> `service.exe` **must not** run as administrator. Only `cli.exe` needs admin rights during install/uninstall, and it requests them through a UAC prompt automatically when needed.
+> `service.exe` **must not** run as administrator. Only `cli.exe` needs admin rights during install, and it requests them through a UAC prompt automatically when needed.
 
 **How to fix.**
 

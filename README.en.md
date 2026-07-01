@@ -54,7 +54,7 @@ The utility is installed **once** and automatically runs each time the game is l
 
 - **Operating System:** Windows 10/11
 - **Game Version:** Steam/Launcher/EGS/VK Play
-- **OS Rights:** administrator privileges in Windows (only required during install/uninstall)
+- **OS Rights:** administrator privileges in Windows (only required during install)
 - **CPU:** 4 or more cores
 - **RAM:** 8+ GB, 12+ GB recommended (below 12 GB some optimizations such as `PreTouch` stay disabled)
 

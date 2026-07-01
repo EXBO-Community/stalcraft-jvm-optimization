@@ -32,7 +32,7 @@ func Run() error {
 		var exit bool
 		items := []item{
 			{"Install", elevatedAction("--install", "install")},
-			{"Uninstall", elevatedAction("--uninstall", "uninstall")},
+			{"Uninstall", uninstallAction},
 			{"Status", func() bool { PrintStatus(); return true }},
 			{"Select Config", func() bool { selectConfig(); return false }},
 			{"Regenerate Config", func() bool { regenerate(sys); return true }},
@@ -66,6 +66,16 @@ func drawHeader(active string, exists bool) {
 	fmt.Println("RU: Стрелки для выбора, Enter для подтверждения.")
 	fmt.Println("EN: Arrow keys to select, Enter to confirm.")
 	fmt.Println()
+}
+
+func uninstallAction() bool {
+	fmt.Println("[uninstall] Removing IFEO hook...")
+	if err := installer.Uninstall(); err != nil {
+		fmt.Printf("[error] %v\n", err)
+		return true
+	}
+	fmt.Println("[uninstall] Done.")
+	return true
 }
 
 func elevatedAction(flag, label string) func() bool {

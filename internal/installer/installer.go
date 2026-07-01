@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/logging"
@@ -54,11 +56,27 @@ func Install() error {
 		return err
 	}
 
+	usersSID, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	if err != nil {
+		return fmt.Errorf("resolve BUILTIN\\Users SID: %w", err)
+	}
+
+	configured := make([]string, 0, len(Targets))
 	for _, target := range Targets {
-		if err := setDebugger(target, service); err != nil {
+		modified, err := setDebugger(target, service, usersSID)
+		if err != nil {
 			slog.Error("installer target failed", "action", "install", "target", target, "err", err)
+			rollbackTargets := append([]string(nil), configured...)
+			if modified {
+				rollbackTargets = append(rollbackTargets, target)
+			}
+			cleanupErr := deleteTargets("rollback", rollbackTargets)
+			if cleanupErr != nil {
+				return errors.Join(err, fmt.Errorf("rollback partial install: %w", cleanupErr))
+			}
 			return err
 		}
+		configured = append(configured, target)
 		slog.Info("installer target set", "target", target, "debugger", logging.RedactPath(service))
 	}
 	slog.Info("installer done", "action", "install")
@@ -81,46 +99,136 @@ func resolveService() (string, error) {
 	return path, nil
 }
 
-func setDebugger(target, debugger string) error {
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.ALL_ACCESS)
+func setDebugger(target, debugger string, deleteSID *windows.SID) (modified bool, err error) {
+	key, openedExisting, err := registry.CreateKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.ALL_ACCESS)
 	if err != nil {
-		return fmt.Errorf("create IFEO key for %s: %w", target, err)
+		return false, fmt.Errorf("create IFEO key for %s: %w", target, err)
 	}
 	defer key.Close()
+	modified = !openedExisting
 
 	if err := key.SetStringValue("Debugger", `"`+debugger+`"`); err != nil {
-		return fmt.Errorf("set Debugger for %s: %w", target, err)
+		return modified, fmt.Errorf("set Debugger for %s: %w", target, err)
 	}
-	return nil
+	modified = true
+	if err := allowKeyDelete(key, deleteSID); err != nil {
+		return modified, fmt.Errorf("grant delete permission for %s: %w", target, err)
+	}
+	return modified, nil
 }
 
-// Uninstall removes the Debugger value for each target, accumulating errors.
+func allowKeyDelete(key registry.Key, sid *windows.SID) error {
+	sd, err := windows.GetSecurityInfo(
+		windows.Handle(key),
+		windows.SE_REGISTRY_KEY,
+		windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return err
+	}
+
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	if dacl == nil {
+		return nil
+	}
+	if daclAllowsDelete(dacl, sid) {
+		return nil
+	}
+
+	ace := windows.EXPLICIT_ACCESS{
+		AccessPermissions: windows.DELETE,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       windows.NO_INHERITANCE,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  windows.TRUSTEE_IS_GROUP,
+			TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	}
+	newDACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ace}, dacl)
+	if err != nil {
+		return err
+	}
+
+	return windows.SetSecurityInfo(
+		windows.Handle(key),
+		windows.SE_REGISTRY_KEY,
+		windows.DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		newDACL,
+		nil,
+	)
+}
+
+func daclAllowsDelete(dacl *windows.ACL, sid *windows.SID) bool {
+	if dacl == nil {
+		return false
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		if ace.Mask&windows.DELETE == 0 {
+			continue
+		}
+		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if windows.EqualSid(aceSID, sid) {
+			return true
+		}
+	}
+	return false
+}
+
+// Uninstall removes each IFEO target key, accumulating errors.
 func Uninstall() error {
 	slog.Info("installer start", "action", "uninstall")
+	errs := deleteTargets("uninstall", Targets)
+	slog.Info("installer done", "action", "uninstall", "errors", countErrors(errs))
+	return errs
+}
+
+func deleteTargets(action string, targets []string) error {
 	var errs []error
-	for _, target := range Targets {
-		if err := clearDebugger(target); err != nil {
-			slog.Warn("installer target failed", "action", "uninstall", "target", target, "err", err)
+	for _, target := range targets {
+		if err := deleteTargetKey(target); err != nil {
+			slog.Warn("installer target failed", "action", action, "target", target, "err", err)
 			errs = append(errs, err)
 			continue
 		}
-		slog.Info("installer target cleared", "target", target)
+		slog.Info("installer target cleared", "action", action, "target", target)
 	}
-	slog.Info("installer done", "action", "uninstall", "errors", len(errs))
 	return errors.Join(errs...)
 }
 
-func clearDebugger(target string) error {
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.SET_VALUE)
-	if err != nil {
-		return fmt.Errorf("open IFEO key for %s: %w", target, err)
-	}
-	defer key.Close()
-
-	if err := key.DeleteValue("Debugger"); err != nil {
-		return fmt.Errorf("delete Debugger for %s: %w", target, err)
+func deleteTargetKey(target string) error {
+	if err := registry.DeleteKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target); err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("delete IFEO key for %s: %w", target, err)
 	}
 	return nil
+}
+
+func countErrors(err error) int {
+	if err == nil {
+		return 0
+	}
+	type unwrapper interface {
+		Unwrap() []error
+	}
+	if joined, ok := err.(unwrapper); ok {
+		return len(joined.Unwrap())
+	}
+	return 1
 }
 
 // Status reads the current Debugger value for each target.
