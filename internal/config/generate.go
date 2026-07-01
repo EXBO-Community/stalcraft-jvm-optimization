@@ -4,7 +4,7 @@ import "github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 
 // Generate produces a performance-oriented Config for the given hardware.
 //
-// The profile targets a single goal: STALCRAFT running as smoothly as
+// The profile targets a single goal: STALZONE running as smoothly as
 // possible on a default.json. Values are NOT scaled down to save
 // resources — we pick the largest safe number every time.
 //
@@ -65,7 +65,7 @@ func Generate(sys sysinfo.Info) Config {
 		newSizePercent = 33
 	}
 
-	// Combat-biased baseline: STALCRAFT is effectively always in combat
+	// Combat-biased baseline: STALZONE is effectively always in combat
 	// (projectile events, hit registration, particle bursts, AI ticks).
 	// An earlier ihop of 35 and tenuring of 6 optimised for idle /
 	// animation-heavy states and left combat bursts to spill into the
@@ -135,7 +135,7 @@ func Generate(sys sysinfo.Info) Config {
 
 // sizeHeap picks a heap size between 2 and 6 GB based on total RAM.
 //
-// We cap at 6 GB: STALCRAFT's live working set is ~2-3 GB, larger
+// We cap at 6 GB: STALZONE's live working set is ~2-3 GB, larger
 // heaps only inflate G1 scan time without helping throughput, and
 // since Xms == Xmx (full pre-commit + pre-touch) every extra GB is
 // paid for at startup regardless of whether it ever gets used. An
@@ -194,7 +194,7 @@ func gcThreads(threads int) (parallel, concurrent int) {
 // 8 GB heap and an i5-10400F with 5 GB heap showed 8 MB regions
 // outperforming 16 MB — more regions gives mixed-GC selection finer
 // granularity so each pass evacuates a smaller, more focused set.
-// Stalcraft's large mesh data lives in LWJGL direct buffers off-heap,
+// Stalzone's large mesh data lives in LWJGL direct buffers off-heap,
 // so the 4 MB humongous threshold at 8 MB regions is not a concern.
 func regionSize(heapGB uint64) int {
 	if heapGB <= 3 {

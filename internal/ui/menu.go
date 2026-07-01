@@ -53,7 +53,7 @@ func Run() error {
 }
 
 func drawHeader(active string, exists bool) {
-	fmt.Println("STALCRAFT JVM Optimization Wrapper")
+	fmt.Println("STALZONE JVM Optimization Wrapper")
 	fmt.Println("-----------------------------------")
 	if active == "" {
 		fmt.Println("Active config: (none — default.json will be used)")

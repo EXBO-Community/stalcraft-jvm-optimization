@@ -1,5 +1,6 @@
-// Package process launches stalcraft.exe via NtCreateUserProcess so we
-// can set PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER and escape our own IFEO hook,
+// Package process launches the game executable (stalzone.exe, or the
+// still-current stalcraft.exe) via NtCreateUserProcess so we can set
+// PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER and escape our own IFEO hook,
 // then boosts the child's priorities and waits until the first visible
 // window appears (or until it exits).
 package process

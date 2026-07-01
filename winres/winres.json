@@ -11,7 +11,7 @@
           "name": "StalcraftWrapper",
           "version": "1.0.0.0"
         },
-        "description": "STALCRAFT JVM Optimization Wrapper",
+        "description": "STALZONE JVM Optimization Wrapper",
         "minimum-os": "win10",
         "execution-level": "asInvoker",
         "dpi-awareness": "system",
@@ -29,7 +29,7 @@
         "info": {
           "0409": {
             "CompanyName": "EXBO-Community",
-            "FileDescription": "STALCRAFT JVM Optimization Wrapper",
+            "FileDescription": "STALZONE JVM Optimization Wrapper",
             "FileVersion": "1.0.4",
             "InternalName": "wrapper",
             "LegalCopyright": "MIT License",

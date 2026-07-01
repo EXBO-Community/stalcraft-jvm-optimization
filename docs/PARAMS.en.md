@@ -1,6 +1,6 @@
 # Configuration Parameters
 
-Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `default.json` covers about 95% of cases: the wrapper inspects your CPU, core count, RAM, and L3 cache size and plugs in values that have been proven to work well on live STALCRAFT.
+Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `default.json` covers about 95% of cases: the wrapper inspects your CPU, core count, RAM, and L3 cache size and plugs in values that have been proven to work well on live STALZONE.
 
 This document explains **why** each parameter exists and **which direction** to nudge it when hand-tuning. The exact numbers for your machine are sitting in `configs/default.json` after first launch — the defaults are already tailored to your hardware.
 
@@ -19,9 +19,9 @@ This document explains **why** each parameter exists and **which direction** to 
 
 ### `heap_size_gb`
 
-Fixes the JVM heap size (`-Xmx`) in gigabytes. The heap is where all Java objects live: chunks, entities, texture buffers, world data structures. A bigger heap means rarer GC cycles but longer individual pauses (G1 has to walk more regions). STALCRAFT's live working set rarely exceeds 4 GB, so growing the heap endlessly is counterproductive.
+Fixes the JVM heap size (`-Xmx`) in gigabytes. The heap is where all Java objects live: chunks, entities, texture buffers, world data structures. A bigger heap means rarer GC cycles but longer individual pauses (G1 has to walk more regions). STALZONE's live working set rarely exceeds 4 GB, so growing the heap endlessly is counterproductive.
 
-The wrapper picks between 2 GB (on 8 GB total RAM) and 8 GB (on 24+ GB total RAM). **Manual tuning is almost never needed.** If you are on 16 GB and STALCRAFT actually reports `OutOfMemoryError` (rare, only with aggressive mod stacks) you can try 6 or 7. Don't go above 8 — that only bloats mixed GC pauses and breaks frame time smoothness.
+The wrapper picks between 2 GB (on 8 GB total RAM) and 8 GB (on 24+ GB total RAM). **Manual tuning is almost never needed.** If you are on 16 GB and STALZONE actually reports `OutOfMemoryError` (rare, only with aggressive mod stacks) you can try 6 or 7. Don't go above 8 — that only bloats mixed GC pauses and breaks frame time smoothness.
 
 ### `pre_touch`
 
@@ -31,7 +31,7 @@ Forces the JVM to physically commit every heap page at process start instead of 
 
 ### `metaspace_mb`
 
-Size of the area holding class metadata. STALCRAFT loads about 11,000 classes (engine + resource packs + lambda-generated classes + reflection accessors), each taking 10-15 KB of metadata, for a peak of 150–220 MB.
+Size of the area holding class metadata. STALZONE loads about 11,000 classes (engine + resource packs + lambda-generated classes + reflection accessors), each taking 10-15 KB of metadata, for a peak of 150–220 MB.
 
 **Set 512 MB.** Any less and you risk `OutOfMemoryError: Metaspace` when big resource packs or long sessions (lots of reflection-generated hidden classes) pile up. Any more is just reserved RAM that is never used. The wrapper pins `MetaspaceSize = MaxMetaspaceSize` so the JVM doesn't do periodic expansions (every expansion triggers a full GC — a disaster).
 
@@ -55,13 +55,13 @@ Size of a single G1 region. The heap is partitioned into equal regions, and all 
 
 Minimum and maximum percentage of heap that can be used for young generation (Eden + Survivor). Young gen is where all new objects are born; most die young and a small fraction gets promoted to old gen.
 
-Bigger young gen = fewer young GCs but each one longer. **Set 30 / 50** — the wrapper does. These values are optimal for STALCRAFT's high allocation rate. Going below 20 / 40 gives you frequent minor pauses; going above 40 / 60 eats the heap budget old gen needs.
+Bigger young gen = fewer young GCs but each one longer. **Set 30 / 50** — the wrapper does. These values are optimal for STALZONE's high allocation rate. Going below 20 / 40 gives you frequent minor pauses; going above 40 / 60 eats the heap budget old gen needs.
 
 ### `g1_reserve_percent`
 
 Fraction of heap G1 holds in reserve for peak allocation spikes between GC cycles. If this reserve runs out you get an emergency full GC, which freezes the game for hundreds of milliseconds.
 
-**Set 20%.** Less and you risk full GCs on allocation peaks (particle effects, chunk loading bursts). More and heap usage becomes inefficient. STALCRAFT with its spiky allocation pattern loves headroom.
+**Set 20%.** Less and you risk full GCs on allocation peaks (particle effects, chunk loading bursts). More and heap usage becomes inefficient. STALZONE with its spiky allocation pattern loves headroom.
 
 ### `g1_heap_waste_percent`
 
@@ -73,7 +73,7 @@ G1's tolerance for "dead" space in old regions. Once more than X% of those regio
 
 How many sequential mixed GC cycles G1 spreads old-gen cleanup over. More cycles = shorter each pause, but more pauses overall.
 
-**4 is the throughput default, 8 is the low-latency choice.** For STALCRAFT leaning on frame time smoothness, 8 is excellent on strong CPUs. On weaker CPUs 4 gives more consistent throughput.
+**4 is the throughput default, 8 is the low-latency choice.** For STALZONE leaning on frame time smoothness, 8 is excellent on strong CPUs. On weaker CPUs 4 gives more consistent throughput.
 
 ### `initiating_heap_occupancy_percent`
 
@@ -97,13 +97,13 @@ How much of the GC pause G1 is allowed to spend updating Remembered Sets (the st
 
 Ratio of Eden to each Survivor area inside young gen. At `32` you get Eden = 32 × Survivor, meaning Survivor is tiny. The effect is that objects get promoted to old gen faster (they don't linger in Survivor).
 
-**32 is our "fast promotion" philosophy.** Classic guides recommend 6-8 (big Survivor = objects live longer in young), but for STALCRAFT with its short-lived temporary objects fast promotion wins: less copying between Survivor spaces, less bookkeeping.
+**32 is our "fast promotion" philosophy.** Classic guides recommend 6-8 (big Survivor = objects live longer in young), but for STALZONE with its short-lived temporary objects fast promotion wins: less copying between Survivor spaces, less bookkeeping.
 
 ### `max_tenuring_threshold`
 
 Maximum number of young GC cycles an object has to survive before being moved to old gen. With `1`, any object surviving its first young GC immediately goes to old.
 
-**1 pairs with `survivor_ratio: 32`.** Together they implement "object either dies very young or goes straight to old gen". Ideal for STALCRAFT: most temporary objects (particle vectors, bounding boxes, transient collections) die in Eden, and the ones that survive a cycle are almost certainly long-lived (entities, chunks) — no point keeping them in young.
+**1 pairs with `survivor_ratio: 32`.** Together they implement "object either dies very young or goes straight to old gen". Ideal for STALZONE: most temporary objects (particle vectors, bounding boxes, transient collections) die in Eden, and the ones that survive a cycle are almost certainly long-lived (entities, chunks) — no point keeping them in young.
 
 ---
 
@@ -143,7 +143,7 @@ Lets G1 adjust the number of active GC workers based on load. Useful on modern C
 
 ### `use_string_deduplication`
 
-G1 finds identical `String` objects in the background and consolidates their internal char arrays into one shared copy. STALCRAFT creates tons of duplicate strings (tag names, translation keys, item IDs); dedup saves 100-200 MB of heap over a long session.
+G1 finds identical `String` objects in the background and consolidates their internal char arrays into one shared copy. STALZONE creates tons of duplicate strings (tag names, translation keys, item IDs); dedup saves 100-200 MB of heap over a long session.
 
 **Enable (`true`)** on 8+ core CPUs. On weak CPUs the ~1% CPU overhead from the dedup thread may be noticeable, but on strong parts this is pure heap savings.
 
@@ -179,7 +179,7 @@ The JVM's JIT compiler translates bytecode into native machine code on the fly. 
 
 Maximum size of the compiled JIT code cache. When the cache fills up, JIT stops compiling new methods and starts evicting old ones — catastrophic for FPS stability.
 
-**400 MB is a safe margin.** STALCRAFT actually uses 150-250 MB, the rest is headroom in case reflection generates lots of compiled accessors. Don't go below 256 MB — you will hit the ceiling.
+**400 MB is a safe margin.** STALZONE actually uses 150-250 MB, the rest is headroom in case reflection generates lots of compiled accessors. Don't go below 256 MB — you will hit the ceiling.
 
 ### `max_inline_level`
 
@@ -203,19 +203,19 @@ Size threshold for a compiled method to be considered "small" and inlined aggres
 
 `max_node_limit` caps the number of nodes in C2's IR graph for a single method. Complex methods (render loop, chunk mesher) can hit this limit and stay uncompiled — meaning interpretation, i.e. ~10-100x slower. `node_limit_fudge_factor` is the allowance above the limit that C2 may take during optimization.
 
-**240000 / 8000 for normal CPUs, 320000 / 8000 for big-cache.** These values let C2 compile even STALCRAFT's heaviest methods. Smaller values (the JVM default is 80000) leave several important methods running in the interpreter.
+**240000 / 8000 for normal CPUs, 320000 / 8000 for big-cache.** These values let C2 compile even STALZONE's heaviest methods. Smaller values (the JVM default is 80000) leave several important methods running in the interpreter.
 
 ### `nmethod_sweep_activity`
 
 Intensity of code cache cleanup for outdated methods. 1 = minimal sweeping, 4 = aggressive.
 
-**1.** STALCRAFT methods don't go stale after warmup — compiled once, they live until exit. Aggressive sweeping only triggers redundant recompilations.
+**1.** STALZONE methods don't go stale after warmup — compiled once, they live until exit. Aggressive sweeping only triggers redundant recompilations.
 
 ### `dont_compile_huge_methods`
 
 Forbids JIT compilation of methods over an internal "huge" threshold (~8000 bytecode instructions).
 
-**`false`.** STALCRAFT has a handful of huge methods (chunk renderer, entity AI) that *must* be compiled. `true` means those stay in the interpreter — constant FPS drops in the relevant scenes.
+**`false`.** STALZONE has a handful of huge methods (chunk renderer, entity AI) that *must* be compiled. `true` means those stay in the interpreter — constant FPS drops in the relevant scenes.
 
 ### `allocate_prefetch_style`
 
@@ -245,17 +245,17 @@ Allows C2 to use FPU/SSE registers for spilling values when general-purpose regi
 
 ## Java 9 specifics
 
-These parameters are specific to OpenJDK 9 (the version STALCRAFT bundles). On newer Java versions they may behave differently or be absent entirely.
+These parameters are specific to OpenJDK 9 (the version STALZONE bundles). On newer Java versions they may behave differently or be absent entirely.
 
 ### `reflection_inflation_threshold`
 
 By default the JVM uses a slow interpreted path for the first 15 calls of any reflection method, only then generating a fast bytecode accessor. This is reflection "warmup" and costs startup time.
 
-**0 = compile immediately.** STALCRAFT heavily uses reflection in its event bus, config loader, mixin loader — the warmup is noticeable. Setting to 0 saves those ~15 calls per method and measurably speeds up startup.
+**0 = compile immediately.** STALZONE heavily uses reflection in its event bus, config loader, mixin loader — the warmup is noticeable. Setting to 0 saves those ~15 calls per method and measurably speeds up startup.
 
 ### `auto_box_cache_max`
 
-The JVM caches `Integer.valueOf(n)` objects for the range [-128, 127] — the autobox cache. STALCRAFT uses `HashMap<Integer, ...>` for block IDs, chunk coords and packet IDs, and those numbers are often outside the default range.
+The JVM caches `Integer.valueOf(n)` objects for the range [-128, 127] — the autobox cache. STALZONE uses `HashMap<Integer, ...>` for block IDs, chunk coords and packet IDs, and those numbers are often outside the default range.
 
 **4096.** Extends the cache to [-128, 4095] — now all block IDs (about 2000 in vanilla + mods) fall inside, and each `Integer.valueOf(blockId)` stops creating a new object. This removes millions of allocations from the renderer and network hot paths.
 
@@ -283,7 +283,7 @@ Multiplier on the C1→C2 promotion threshold. 1.0 is the default (~10,000 invoc
 
 ### `use_large_pages`
 
-Enables 2 MB (or 1 GB) memory pages instead of the standard 4 KB. Large pages reduce TLB pressure — the CPU spends fewer cycles on page table walks. For an allocation-heavy workload like STALCRAFT the win is 2-5% throughput plus reduced TLB jitter (critical for latency-sensitive setups like 8 kHz mice).
+Enables 2 MB (or 1 GB) memory pages instead of the standard 4 KB. Large pages reduce TLB pressure — the CPU spends fewer cycles on page table walks. For an allocation-heavy workload like STALZONE the win is 2-5% throughput plus reduced TLB jitter (critical for latency-sensitive setups like 8 kHz mice).
 
 **Requires Windows setup.** Without `SeLockMemoryPrivilege` the JVM silently ignores the flag:
 

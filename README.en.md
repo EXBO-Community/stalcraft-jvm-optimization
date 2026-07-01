@@ -15,7 +15,7 @@
 
 **A utility for modifying JVM startup parameters and optimizing its performance.**
 
-**JVM (Java Virtual Machine)** is the runtime environment through which [STALCRAFT: X](https://stalcraft.net/) operates.
+**JVM (Java Virtual Machine)** is the runtime environment through which [STALZONE](https://stalcraft.net/) operates.
 
 The game code is executed not directly on the system, but inside a Java virtual machine. During execution, it compiles the code into machine code specific to your PC (JIT compilation). Essentially, this is an additional layer between the game and hardware that is responsible for executing the code and adapting it to the system.
 
@@ -39,7 +39,7 @@ The utility ships as two binaries that must live in the same directory:
 - **`cli.exe`** — the interactive menu for installing, removing and managing configurations. The user only launches this when they need to change something.
 - **`service.exe`** — the silent interceptor that Windows spawns automatically when the game starts. It has no UI, and you never run it by hand.
 
-`service.exe` intercepts the startup of the game process `stalcraft.exe` (launcher) or `stalcraftw.exe` (Steam) to:
+`service.exe` intercepts the startup of the game process `stalzone.exe` (launcher) or `stalzonew.exe` (Steam) — plus the legacy `stalcraft.exe` / `stalcraftw.exe` until the game finishes renaming its process — to:
 
 - **Select optimal JVM configuration:** allocated resources volume, Garbage Collector (GC) mode, and JIT compilation mode.
 - **Increase game process priority:** the process runs with higher priority compared to other processes.
@@ -82,7 +82,7 @@ The utility is installed **once** and automatically runs each time the game is l
 > A few notes on how the utility behaves:
 >
 > - Hardware G-Sync may cause image artifacts. Disabling it is recommended.
-> - The utility only applies to STALCRAFT and does not touch other JVM applications.
+> - The utility only applies to STALZONE and does not touch other JVM applications.
 > - On systems with 8-16 GB of RAM, it is recommended to keep the Windows page file enabled.
 
 ### Uninstallation
