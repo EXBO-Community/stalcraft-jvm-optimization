@@ -61,10 +61,10 @@ The fastest indicator — **right before the game window appears, a small black 
 A more precise check via Task Manager:
 
 1. Launch the game and, without minimizing it, open **Task Manager** (`Ctrl + Shift + Esc`) → **Details** tab.
-2. Find the `stalcraft.exe` process (launcher/EGS/VK Play) or `stalcraftw.exe` (Steam) — after the game's rebrand it may be named `stalzone.exe` / `stalzonew.exe`.
+2. Find the `stalzone.exe` process (launcher/EGS/VK Play) or `stalzonew.exe` (Steam).
 3. Check the **Memory** column.
 
-Starting with version **1.1.0** the wrapper always produces a working `default.json` profile and allocates at least 2–4 GB of heap even on weak systems. On a machine with 16+ GB of RAM you should see `stalcraft.exe` / `stalcraftw.exe` (or `stalzone.exe` / `stalzonew.exe`) using **6–8 GB**. If even on a strong PC the game is only using 2–4 GB, the JVM flags **were not applied** — the game launched with the stock launcher settings.
+Starting with version **1.1.0** the wrapper always produces a working `default.json` profile and allocates at least 2–4 GB of heap even on weak systems. On a machine with 16+ GB of RAM you should see `stalzone.exe` / `stalzonew.exe` using roughly **4–6 GB of heap plus JVM overhead**. If even on a strong PC the game is only using 2–4 GB, the JVM flags **were not applied** — the game launched with the stock launcher settings.
 
 A third symptom of the same issue: the `jvm_wrapper/logs/` folder is **empty** or `wrapper.log` doesn't update when you launch the game. That means `service.exe` was never executed — Windows is not routing the game launch through the interception.
 
@@ -84,7 +84,7 @@ The only reliable fix is to **completely uninstall** the antivirus. Not disable,
 3. Click **Uninstall** and follow the installer prompts. If the antivirus offers to "disable" instead of uninstall, refuse — pick the uninstall option.
 4. **Reboot your computer** — this is mandatory, some drivers only unload after a reboot.
 5. Run `cli.exe` and perform `Uninstall` → `Install` again to rewrite the IFEO entries from scratch.
-6. Launch the game. A console window should now flash briefly on startup, and `stalcraft.exe` / `stalcraftw.exe` (or `stalzone.exe` / `stalzonew.exe`) in Task Manager should be using noticeably more memory than before.
+6. Launch the game. A console window should now flash briefly on startup, and `stalzone.exe` / `stalzonew.exe` in Task Manager should be using noticeably more memory than before.
 
 For protection after uninstalling, leave **Windows Defender** (the built-in Microsoft Defender) on. It's sufficient for modern Windows 10/11 and doesn't block IFEO writes. If Defender happens to flag `service.exe` as suspicious, add the `jvm_wrapper` folder to exclusions ([README → Installation](../README.en.md#installation)).
 
@@ -98,7 +98,7 @@ This section covers the messages that appear inside the launcher window (EXBO, S
 
 ![Launcher window showing "Failed while waiting for launched game"](./assets/failed-while-waiting.png)
 
-**What happened.** The launcher started `stalcraft.exe` / `stalcraftw.exe` (or `stalzone.exe` / `stalzonew.exe`) and expected the game process to stay alive for the entire duration of your play session. But because of how the wrapper works (IFEO hook + launch via `NtCreateUserProcess`), the launcher "loses sight of" the game process shortly after it appears — `service.exe` detaches as soon as the game shows its first window. When you then close the game normally — via the in-game menu or the window close button — the launcher sees that as "the process disappeared unexpectedly" and shows this dialog.
+**What happened.** The launcher started `stalzone.exe` / `stalzonew.exe` and expected the game process to stay alive for the entire duration of your play session. But because of how the wrapper works (IFEO hook + launch via `NtCreateUserProcess`), the launcher "loses sight of" the game process shortly after it appears — `service.exe` detaches as soon as the game shows its first window. When you then close the game normally — via the in-game menu or the window close button — the launcher sees that as "the process disappeared unexpectedly" and shows this dialog.
 
 **What to do.** Just click **OK** and dismiss the message. It's normal behavior, no action is required: the game launched, played and exited correctly. The launcher simply doesn't know how to track a process that was started through an IFEO hook.
 

@@ -11,14 +11,14 @@ import "github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 // Only heap size, G1 region size and GC thread count actually depend
 // on memory and core count; everything else is a fixed, tested default
 // compatible with OpenJDK 9. The tier-specific pause/mixed-count block
-// below is keyed on DDR memory speed (slow/mid/fast).
+// below is keyed on DDR memory speed (slow/mid).
 //
 // X3D-specific tuning was attempted (halved pause budget, boosted soft-
 // ref retention, clamped concurrent worker count, deeper JIT inlining)
 // but community testing on a 9800X3D + DDR5-6200 rig showed the non-
 // X3D mid-tier profile outperforming it on perceived smoothness. The
-// X3D branch was removed entirely; V-Cache parts are treated as
-// regular fast-tier hardware driven only by MemTier().
+// X3D branch was removed entirely; V-Cache parts are treated as regular
+// hardware and driven only by MemTier().
 func Generate(sys sysinfo.Info) Config {
 	heap := sizeHeap(sys.TotalGB())
 	parallel, concurrent := gcThreads(sys.CPUThreads)
@@ -190,8 +190,8 @@ func gcThreads(threads int) (parallel, concurrent int) {
 // regionSize matches G1 region granularity to heap size. JVM only
 // accepts powers of two between 1 and 32 MB; larger regions mean fewer
 // RSet scans, smaller regions mean finer mixed-GC control. sizeHeap
-// caps heap at 8 GB, and CapFrameX measurements on both an X3D with
-// 8 GB heap and an i5-10400F with 5 GB heap showed 8 MB regions
+// caps heap at 6 GB, and CapFrameX measurements on both an X3D with
+// an 8 GB heap test profile and an i5-10400F with 5 GB heap showed 8 MB regions
 // outperforming 16 MB — more regions gives mixed-GC selection finer
 // granularity so each pass evacuates a smaller, more focused set.
 // Stalzone's large mesh data lives in LWJGL direct buffers off-heap,

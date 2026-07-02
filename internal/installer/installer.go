@@ -1,7 +1,7 @@
 // Package installer wires the wrapper into the game executables via the
 // Image File Execution Options "Debugger" key, so Windows launches the
 // wrapper whenever the game is started. See Targets for the exact process
-// names and the stalcraft.exe -> stalzone.exe rebrand handling.
+// names.
 package installer
 
 import (
@@ -25,16 +25,10 @@ const (
 
 // Targets is the set of game executables rewritten to launch the wrapper.
 //
-// stalzone.exe / stalzonew.exe are the canonical names after the
-// STALCRAFT->STALZONE rebrand and are registered ahead of time: the game
-// has not renamed its process binary yet but is expected to. Until then,
-// stalcraft.exe / stalcraftw.exe stay the live process names and act as a
-// temporary fallback — they become outdated once the rename lands. Hooking
-// all four is a harmless superset: an IFEO key for a name that never
-// launches simply never fires.
+// stalzone.exe is used by the standalone launcher, stalzonew.exe by Steam.
 var Targets = []string{
-	"stalzone.exe", "stalzonew.exe", // canonical post-rebrand (registered preemptively)
-	"stalcraft.exe", "stalcraftw.exe", // current live names, temporary fallback
+	"stalzone.exe",
+	"stalzonew.exe",
 }
 
 // Entry reports the install state of a single target.

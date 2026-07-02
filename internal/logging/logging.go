@@ -61,8 +61,8 @@ func logDir() string {
 // troubleshooter can see the game directory structure without learning
 // who owns the machine.
 //
-//	C:\Users\Vasya\Games\stalcraft\stalcraft.exe
-//	  → C:\Users\<user>\Games\stalcraft\stalcraft.exe
+//	C:\Users\Vasya\Games\STALZONE\stalzone.exe
+//	  → C:\Users\<user>\Games\STALZONE\stalzone.exe
 func RedactPath(p string) string {
 	if p == "" {
 		return p

@@ -39,7 +39,7 @@ The utility ships as two binaries that must live in the same directory:
 - **`cli.exe`** — the interactive menu for installing, removing and managing configurations. The user only launches this when they need to change something.
 - **`service.exe`** — the silent interceptor that Windows spawns automatically when the game starts. It has no UI, and you never run it by hand.
 
-`service.exe` intercepts the startup of the game process `stalzone.exe` (launcher) or `stalzonew.exe` (Steam) — plus the legacy `stalcraft.exe` / `stalcraftw.exe` until the game finishes renaming its process — to:
+`service.exe` intercepts the startup of the game process `stalzone.exe` (launcher/EGS/VK Play) or `stalzonew.exe` (Steam) to:
 
 - **Select optimal JVM configuration:** allocated resources volume, Garbage Collector (GC) mode, and JIT compilation mode.
 - **Increase game process priority:** the process runs with higher priority compared to other processes.
@@ -114,9 +114,13 @@ You can change the launch configuration yourself. To do this:
 
 #### Example configurations
 
-The repository currently ships one example — `examples/8khz.json`, targeted at high-end systems (8+ cores, 32 GB RAM) running 8 kHz mice. It prioritizes minimal STW pauses and predictable frame time at the cost of a small amount of throughput.
+The repository ships one example: `examples/aikar.json`.
+It is inspired by popular Minecraft/Paper/Aikar G1GC tuning ideas, adapted for STALZONE and OpenJDK 9.
+It is not an exact copy of server-side Aikar flags and not a universal recommendation.
 
-To use an example, browse the [`/examples`](./examples/) directory in this repository, download the `.json` you want and drop it into `jvm_wrapper/configs/`.
+`aikar.json` uses [PaperMC Aikar flags](https://docs.papermc.io/paper/aikars-flags/) and Prism Launcher's warning that [more allocated RAM does not always mean better performance](https://prismlauncher.org/wiki/help-pages/java-settings/) as reference points.
+
+To use the example, browse the [`/examples`](./examples/) directory in this repository, download `aikar.json` and drop it into `jvm_wrapper/configs/`.
 
 Then run the utility, pick `Select Config` in the menu. A new profile should appear alongside `default.json` — select it, then restart the game.
 
