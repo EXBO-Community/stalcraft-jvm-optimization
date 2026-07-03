@@ -2,8 +2,7 @@
 // "stalzone.exe <args>..." when the game launcher tries to start the real
 // executable; service.exe then replaces the JVM flags with a tuned profile,
 // starts the game via NtCreateUserProcess (bypassing
-// its own IFEO hook), boosts priorities and waits until the game
-// window is visible.
+// its own IFEO hook) and waits until the game window is visible.
 //
 // service.exe has no UI and no installer — those live in cli.exe.
 package main
@@ -102,11 +101,6 @@ func launch(exePath string, args []string) int {
 	}
 	defer proc.Close()
 	slog.Info("process started", "pid", proc.PID)
-
-	if err := proc.Boost(); err != nil {
-		slog.Warn("process boost partial", "err", err)
-		fmt.Fprintf(os.Stderr, "[boost] %v\n", err)
-	}
 
 	start := time.Now()
 	code, err := proc.Wait()

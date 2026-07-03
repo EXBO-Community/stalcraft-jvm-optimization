@@ -17,8 +17,7 @@ When `stalzone.exe` / `stalzonew.exe` is launched, Windows starts `service.exe` 
 1. Loads the active configuration file from the `configs/` directory next to the executable.
 2. Strips conflicting flags from the original launcher arguments and injects hardware-tuned JVM flags.
 3. Creates the process directly through `ntdll!NtCreateUserProcess` with the `PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER` attribute to avoid re-interception through IFEO.
-4. Raises memory and I/O priorities of the new process via `NtSetInformationProcess`.
-5. Exits as soon as the game process shows its first visible window.
+4. Exits as soon as the game process shows its first visible window.
 
 ## Logging
 
