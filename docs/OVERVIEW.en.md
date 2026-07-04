@@ -30,19 +30,28 @@ There is no separate JVM/GC log file — STALZONE bundles a custom OpenJDK 9 bui
 Installing the IFEO interception
 
 ```bash
-cli.exe --install     # install IFEO interception
+cli.exe install       # install IFEO interception
 ```
 
 Checking interception status
 
 ```bash
-cli.exe --status      # check interception status
+cli.exe status        # check interception status
 ```
 
 Removing the IFEO interception
 
 ```bash
-cli.exe --uninstall   # remove IFEO interception
+cli.exe uninstall     # remove IFEO interception
+```
+
+Config management
+
+```bash
+cli.exe config list
+cli.exe config releases
+cli.exe config regenerate v1.1.2
+cli.exe config select v1.1.2/default
 ```
 
 Running `cli.exe` without arguments opens the interactive menu that exposes the same actions plus config management.
@@ -54,8 +63,11 @@ From the repository root:
 
 ```bash
 mkdir -p build
-go build -trimpath -ldflags="-s -w" -o build/cli.exe     ./cmd/cli
-go build -trimpath -ldflags="-s -w" -o build/service.exe ./cmd/service
+version="$(git describe --tags --always --dirty)"
+commit="$(git rev-parse --short HEAD)"
+ldflags="-s -w -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Version=${version} -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Commit=${commit}"
+go build -trimpath -ldflags="${ldflags}" -o build/cli.exe     ./cmd/cli
+go build -trimpath -ldflags="${ldflags}" -o build/service.exe ./cmd/service
 ```
 
 Drop both binaries into the same directory before running — the installer is only in `cli.exe`, but it looks for `service.exe` next to itself.

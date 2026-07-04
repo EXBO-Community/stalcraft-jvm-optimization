@@ -1,8 +1,8 @@
 # Configuration Parameters
 
-Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `default.json` covers about 95% of cases: the wrapper inspects your CPU, logical thread count, RAM, memory speed and Large Pages availability, then plugs in values that have been proven to work well on live STALZONE.
+Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `v1.1.2/default.json` profile covers about 95% of cases: the wrapper inspects your CPU, logical thread count, RAM, memory speed and Large Pages availability, then plugs in values that have been proven to work well on live STALZONE.
 
-This document explains **why** each parameter exists and **which direction** to nudge it when hand-tuning. The exact numbers for your machine are sitting in `configs/default.json` after first launch — the defaults are already tailored to your hardware.
+This document explains **why** each parameter exists and **which direction** to nudge it when hand-tuning. The exact numbers for your machine are sitting in `configs/v1.1.2/default.json` after first launch — the defaults are already tailored to your hardware.
 
 > **Warning:** a misconfigured parameter often produces results **worse** than "leave it alone". Without a clearly stated problem, keep the auto-generated config. Every manual change should be deliberate.
 

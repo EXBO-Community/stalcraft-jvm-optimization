@@ -23,7 +23,7 @@ This program allows you to change JVM startup parameters to increase game perfor
 
 > [!IMPORTANT]
 > The utility tunes JVM parameters for any amount of RAM starting from 8 GB.
-> On systems with less RAM the generated `default.json` uses a minimally safe heap,
+> On systems with less RAM the generated profile uses a minimally safe heap,
 > but stable gameplay is not guaranteed — prefer upgrading your RAM or sticking with
 > the stock EXBO launcher settings.
 
@@ -94,8 +94,8 @@ The utility is installed **once** and automatically runs each time the game is l
 
 ### Configuration
 
-After installation, the utility will automatically create a `default.json` configuration profile,
-which will be located in the `jvm_wrapper/configs/default.json` folder.
+After installation, the utility will automatically create a `v1.1.2/default.json` configuration profile,
+which will be located at `jvm_wrapper/configs/v1.1.2/default.json`.
 The game will launch with this profile by default.
 This profile will be adapted to your computer's parameters, but its existence does not preclude custom configuration.
 
@@ -104,13 +104,23 @@ This profile will be adapted to your computer's parameters, but its existence do
 You can change the launch configuration yourself. To do this:
 
 1. Run `cli.exe`, select `Select Config` in the menu using the arrow keys and press **Enter**.
-2. Select the desired configuration file and press **Enter**.
+2. Select the desired configuration file and press **Enter**. You can enter version folders and use `< Back` to move one level up.
 3. Restart the game if it is running.
 
 > [!NOTE]
-> By default only the `default.json` configuration is available, but it is *not* the only option.
+> By default the active configuration is `v1.1.2/default.json`, but it is *not* the only option.
 > See the [Example configurations](#example-configurations) and [Custom configuration](#custom-configuration)
 > sections below for instructions.
+
+The same operations are available as CLI commands:
+
+- `cli.exe status`
+- `cli.exe install`
+- `cli.exe uninstall`
+- `cli.exe config list`
+- `cli.exe config releases`
+- `cli.exe config regenerate v1.1.2`
+- `cli.exe config select v1.1.2/default`
 
 #### Example configurations
 
@@ -122,11 +132,11 @@ It is not an exact copy of server-side Aikar flags and not a universal recommend
 
 To use the example, browse the [`/examples`](./examples/) directory in this repository, download `aikar.json` and drop it into `jvm_wrapper/configs/`.
 
-Then run the utility, pick `Select Config` in the menu. A new profile should appear alongside `default.json` — select it, then restart the game.
+Then run the utility and pick `Select Config` in the menu. A new profile should appear in the list — select it, then restart the game.
 
 #### Custom Configuration
 
-To create your own configuration profile, simply copy the `default.json` file,
+To create your own configuration profile, simply copy the `configs/v1.1.2/default.json` file,
 rename it to something like `my_setup.json`, then edit it with any available
 text editor.
 
@@ -139,9 +149,9 @@ Creating your own configuration should be accompanied by studying the [documenta
 on configuration parameters.
 
 > [!TIP]
-> If you've customized the configuration in `default.json` and want to revert
-> to the recommended settings — select `Regenerate Config` in the menu.
-> This action will write the optimal settings for your PC to `default.json`.
+> If you've customized a configuration and want to revert
+> to the recommended settings — select `Regenerate Config` in the menu and choose the desired version.
+> This action will rewrite `configs/<version>/default.json` and make it active.
 
 ---
 

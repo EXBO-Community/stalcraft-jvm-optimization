@@ -30,19 +30,28 @@
 Установка перехвата IFEO
 
 ```bash
-cli.exe --install     # установить перехват IFEO
+cli.exe install       # установить перехват IFEO
 ```
 
 Проверка статуса перехвата
 
 ```bash
-cli.exe --status      # проверить статус перехвата
+cli.exe status        # проверить статус перехвата
 ```
 
 Удаление перехвата IFEO
 
 ```bash
-cli.exe --uninstall   # удалить перехват IFEO
+cli.exe uninstall     # удалить перехват IFEO
+```
+
+Управление конфигами
+
+```bash
+cli.exe config list
+cli.exe config releases
+cli.exe config regenerate v1.1.2
+cli.exe config select v1.1.2/default
 ```
 
 Запуск `cli.exe` без аргументов открывает интерактивное меню с теми же действиями и управлением конфигами.
@@ -54,8 +63,11 @@ cli.exe --uninstall   # удалить перехват IFEO
 
 ```bash
 mkdir -p build
-go build -trimpath -ldflags="-s -w" -o build/cli.exe     ./cmd/cli
-go build -trimpath -ldflags="-s -w" -o build/service.exe ./cmd/service
+version="$(git describe --tags --always --dirty)"
+commit="$(git rev-parse --short HEAD)"
+ldflags="-s -w -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Version=${version} -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Commit=${commit}"
+go build -trimpath -ldflags="${ldflags}" -o build/cli.exe     ./cmd/cli
+go build -trimpath -ldflags="${ldflags}" -o build/service.exe ./cmd/service
 ```
 
 Оба бинарника затем кладутся в одну директорию — установку делает только `cli.exe`, но он ищет `service.exe` рядом с собой.

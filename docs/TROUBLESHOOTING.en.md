@@ -64,7 +64,7 @@ A more precise check via Task Manager:
 2. Find the `stalzone.exe` process (launcher/EGS/VK Play) or `stalzonew.exe` (Steam).
 3. Check the **Memory** column.
 
-Starting with version **1.1.0** the wrapper always produces a working `default.json` profile and allocates at least 2–4 GB of heap even on weak systems. On a machine with 16+ GB of RAM you should see `stalzone.exe` / `stalzonew.exe` using roughly **4–6 GB of heap plus JVM overhead**. If even on a strong PC the game is only using 2–4 GB, the JVM flags **were not applied** — the game launched with the stock launcher settings.
+Starting with version **1.1.0** the wrapper always produces a working profile and allocates at least 2–4 GB of heap even on weak systems. In the current layout the active generated profile is stored as `configs/v1.1.2/default.json`. On a machine with 16+ GB of RAM you should see `stalzone.exe` / `stalzonew.exe` using roughly **4–6 GB of heap plus JVM overhead**. If even on a strong PC the game is only using 2–4 GB, the JVM flags **were not applied** — the game launched with the stock launcher settings.
 
 A third symptom of the same issue: the `jvm_wrapper/logs/` folder is **empty** or `wrapper.log` doesn't update when you launch the game. That means `service.exe` was never executed — Windows is not routing the game launch through the interception.
 
@@ -109,7 +109,7 @@ This section covers the messages that appear inside the launcher window (EXBO, S
 
 **If the game is actually crashing.**
 
-1. Try **Regenerate Config** in the `cli.exe` menu — it rebuilds `default.json` for the current hardware, in case the old config is stale or no longer matches a PC upgrade.
+1. Try **Regenerate Config** in the `cli.exe` menu and choose the desired version — it rebuilds `configs/<version>/default.json` for the current hardware, in case the old config is stale or no longer matches a PC upgrade.
 2. If that helped — keep playing, the problem is solved.
 3. If it didn't help — temporarily remove the wrapper (`cli.exe` → `Uninstall`) and play without it. If the crashes go away without the wrapper, the problem is compatibility with your hardware or Windows build — open an issue on GitHub and attach `jvm_wrapper/logs/wrapper.log`.
 4. If the crashes persist without the wrapper, the wrapper isn't the cause — it's the game itself, your drivers, or the hardware.
