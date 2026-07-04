@@ -1,231 +1,999 @@
-// Package ui renders the interactive arrow-key menu shown when the
-// wrapper is launched without CLI arguments.
+// Package ui renders the interactive menu shown when the wrapper is launched
+// without CLI arguments.
 package ui
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/config"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/elevate"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/installer"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/profile"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 )
 
-type item struct {
+type screen int
+
+const (
+	screenMain screen = iota
+	screenStartupWarning
+	screenConfigs
+	screenReleases
+	screenStatus
+)
+
+type noticeKind int
+
+const (
+	noticeInfo noticeKind = iota
+	noticeSuccess
+	noticeWarning
+	noticeError
+)
+
+const transientNoticeTTL = 5 * time.Second
+
+type menuItem struct {
 	label  string
-	action func() bool // true → pause before clearing screen
+	detail string
+	active bool
+	run    func(*menuModel) tea.Cmd
+}
+
+type menuModel struct {
+	sys            sysinfo.Info
+	screen         screen
+	selected       int
+	width          int
+	height         int
+	configPrefix   string
+	configEntries  []config.Entry
+	statusEntries  []installer.Entry
+	startupWarning string
+	notice         string
+	noticeKind     noticeKind
+	noticeID       int
+}
+
+type actionResultMsg struct {
+	kind noticeKind
+	text string
+}
+
+type clearNoticeMsg struct {
+	id int
 }
 
 // Run displays the top-level menu until the user chooses Exit.
 func Run() error {
-	restoreVT := enableVT()
-	defer restoreVT()
-
 	sys := sysinfo.Detect()
-	if err := config.Ensure(sys); err != nil {
+	if err := profile.Ensure(sys); err != nil {
 		return err
 	}
 
-	for {
-		drawHeader(config.ActiveName(), config.ActiveExists())
+	prepareTerminal()
+	model := newMenuModel(sys)
+	if warning := startupWarning(); warning != "" {
+		model.screen = screenStartupWarning
+		model.startupWarning = warning
+	}
 
-		var exit bool
-		items := []item{
-			{"Install", elevatedAction("--install", "install")},
-			{"Uninstall", uninstallAction},
-			{"Status", func() bool { PrintStatus(); return true }},
-			{"Select Config", func() bool { selectConfig(); return false }},
-			{"Regenerate Config", func() bool { regenerate(sys); return true }},
-			{"Exit", func() bool { exit = true; return false }},
-		}
+	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
+	return err
+}
 
-		wait := runMenu(items)
-		if exit {
-			return nil
+func newMenuModel(sys sysinfo.Info) menuModel {
+	return menuModel{sys: sys}
+}
+
+func (m menuModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	case actionResultMsg:
+		return m, m.setNotice(msg.kind, msg.text)
+	case clearNoticeMsg:
+		if m.noticeID == msg.id {
+			m.clearNotice()
 		}
-		if wait {
-			fmt.Println()
-			fmt.Println("Press Enter to continue...")
-			fmt.Scanln()
-		}
-		fmt.Print("\033[2J\033[H")
+		return m, nil
+	default:
+		return m, nil
 	}
 }
 
-func drawHeader(active string, exists bool) {
-	fmt.Println("STALZONE JVM Optimization Wrapper")
-	fmt.Println("-----------------------------------")
-	if active == "" {
-		fmt.Println("Active config: (none — default.json will be used)")
-	} else if !exists {
-		fmt.Printf("Active config: %s  (missing — falls back to default)\n", active)
-	} else {
-		fmt.Printf("Active config: %s\n", active)
-	}
-	fmt.Println()
-	fmt.Println("RU: Стрелки для выбора, Enter для подтверждения.")
-	fmt.Println("EN: Arrow keys to select, Enter to confirm.")
-	fmt.Println()
-}
-
-func uninstallAction() bool {
-	fmt.Println("[uninstall] Removing IFEO hook...")
-	if err := installer.Uninstall(); err != nil {
-		fmt.Printf("[error] %v\n", err)
-		return true
-	}
-	fmt.Println("[uninstall] Done.")
-	return true
-}
-
-func elevatedAction(flag, label string) func() bool {
-	return func() bool {
-		fmt.Printf("[%s] Requesting administrator privileges...\n", label)
-		code, err := elevate.Run(flag)
-		switch {
-		case err != nil:
-			fmt.Printf("[error] %v\n", err)
-		case code != 0:
-			fmt.Printf("[error] %s failed (exit code %d)\n", label, code)
-		default:
-			fmt.Printf("[%s] Done.\n", label)
+func (m menuModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc", "backspace", "left":
+		m.goBack()
+		return m, nil
+	case "up", "k":
+		if m.selected > 0 {
+			m.selected--
 		}
-		return true
-	}
-}
-
-// PrintStatus is exposed so main can reuse it for the --status CLI flag.
-func PrintStatus() {
-	entries := installer.Status()
-	anyInstalled := false
-	for _, e := range entries {
-		if e.Installed {
-			fmt.Printf("[status] %s -> %s\n", e.Target, e.Debugger)
-			anyInstalled = true
-		} else {
-			fmt.Printf("[status] %s: not installed\n", e.Target)
+		return m, nil
+	case "down", "j":
+		if max := len(m.items()) - 1; m.selected < max {
+			m.selected++
 		}
-	}
-	if !anyInstalled {
-		fmt.Println("[status] Not installed")
+		return m, nil
+	case "enter", " ":
+		items := m.items()
+		if len(items) == 0 || m.selected >= len(items) {
+			return m, nil
+		}
+		cmd := items[m.selected].run(&m)
+		return m, cmd
+	default:
+		return m, nil
 	}
 }
 
-func selectConfig() {
-	names, err := config.List()
+func (m *menuModel) goBack() {
+	switch m.screen {
+	case screenStartupWarning:
+		m.ignoreStartupWarning()
+	case screenMain:
+		return
+	case screenConfigs:
+		if m.configPrefix == "" {
+			m.openMain()
+			return
+		}
+		m.openConfigDir(parentConfigDir(m.configPrefix))
+	default:
+		m.openMain()
+	}
+}
+
+func (m *menuModel) openMain() {
+	m.screen = screenMain
+	m.selected = 0
+	m.configPrefix = ""
+	m.configEntries = nil
+	m.statusEntries = nil
+}
+
+func (m *menuModel) ignoreStartupWarning() {
+	m.openMain()
+	m.clearNotice()
+}
+
+func (m *menuModel) openConfigDir(prefix string) {
+	entries, err := config.ListDir(prefix)
+	m.screen = screenConfigs
+	m.selected = 0
+	m.configPrefix = prefix
+	m.configEntries = entries
+	m.clearNotice()
 	if err != nil {
-		fmt.Printf("[error] %v\n", err)
-		return
+		m.setStickyNotice(noticeError, err.Error())
 	}
-	if len(names) == 0 {
-		fmt.Println("[config] No configs found in configs/")
-		return
+}
+
+func (m *menuModel) openReleases() {
+	m.screen = screenReleases
+	m.selected = 0
+	m.sys = sysinfo.Detect()
+	m.clearNotice()
+}
+
+func (m *menuModel) openStatus() {
+	m.screen = screenStatus
+	m.selected = 0
+	m.statusEntries = installer.Status()
+	m.clearNotice()
+}
+
+func (m menuModel) items() []menuItem {
+	switch m.screen {
+	case screenStartupWarning:
+		return m.startupWarningItems()
+	case screenConfigs:
+		return m.configItems()
+	case screenReleases:
+		return m.releaseItems()
+	case screenStatus:
+		return m.statusItems()
+	default:
+		return m.mainItems()
+	}
+}
+
+func (m menuModel) startupWarningItems() []menuItem {
+	return []menuItem{
+		{
+			label:  "Install",
+			detail: "Make this folder the active wrapper installation.",
+			run: func(m *menuModel) tea.Cmd {
+				if _, warning := localServiceCheck(); warning != "" {
+					return m.setNotice(noticeError, warning)
+				}
+				m.openMain()
+				m.setStickyNotice(noticeInfo, "Requesting administrator privileges...")
+				return installCmd()
+			},
+		},
+		{
+			label:  "Ignore",
+			detail: "Continue without changing the current installation.",
+			run: func(m *menuModel) tea.Cmd {
+				m.ignoreStartupWarning()
+				return nil
+			},
+		},
+	}
+}
+
+func (m menuModel) mainItems() []menuItem {
+	return []menuItem{
+		{
+			label:  "Install",
+			detail: "Request administrator privileges and register the IFEO hook.",
+			run: func(m *menuModel) tea.Cmd {
+				if _, warning := localServiceCheck(); warning != "" {
+					return m.setNotice(noticeError, warning)
+				}
+				m.setStickyNotice(noticeInfo, "Requesting administrator privileges...")
+				return installCmd()
+			},
+		},
+		{
+			label:  "Uninstall",
+			detail: "Remove the IFEO hook from configured game executables.",
+			run: func(m *menuModel) tea.Cmd {
+				m.setStickyNotice(noticeInfo, "Removing IFEO hook...")
+				return uninstallCmd()
+			},
+		},
+		{
+			label:  "Status",
+			detail: "Show current IFEO hook status for every target executable.",
+			run: func(m *menuModel) tea.Cmd {
+				m.openStatus()
+				return nil
+			},
+		},
+		{
+			label:  "Select Config",
+			detail: "Browse configs/ folders and choose the active JVM profile.",
+			run: func(m *menuModel) tea.Cmd {
+				m.openConfigDir("")
+				return nil
+			},
+		},
+		{
+			label:  "Regenerate Config",
+			detail: "Pick a generator release and rebuild its generated profiles.",
+			run: func(m *menuModel) tea.Cmd {
+				m.openReleases()
+				return nil
+			},
+		},
+		{
+			label:  "Exit",
+			detail: "Close the wrapper menu.",
+			run: func(m *menuModel) tea.Cmd {
+				return tea.Quit
+			},
+		},
+	}
+}
+
+func (m menuModel) configItems() []menuItem {
+	active := config.ActiveName()
+	items := make([]menuItem, 0, len(m.configEntries)+1)
+	for _, entry := range m.configEntries {
+		e := entry
+		if e.IsDir {
+			items = append(items, menuItem{
+				label:  e.Name + "/",
+				detail: "Folder",
+				active: active == e.ID || strings.HasPrefix(active, e.ID+"/"),
+				run: func(m *menuModel) tea.Cmd {
+					m.openConfigDir(e.ID)
+					return nil
+				},
+			})
+			continue
+		}
+		items = append(items, menuItem{
+			label:  e.Name,
+			detail: e.ID,
+			active: e.ID == active,
+			run: func(m *menuModel) tea.Cmd {
+				if err := config.SetActive(e.ID); err != nil {
+					return m.setNotice(noticeError, err.Error())
+				}
+				m.openMain()
+				return m.setNotice(noticeSuccess, "Active config set to "+e.ID)
+			},
+		})
+	}
+	items = append(items, menuItem{
+		label:  "< Back",
+		detail: "Return to the previous screen.",
+		run: func(m *menuModel) tea.Cmd {
+			m.goBack()
+			return nil
+		},
+	})
+	return items
+}
+
+func (m menuModel) releaseItems() []menuItem {
+	releases := profile.Releases()
+	items := make([]menuItem, 0, len(releases)+1)
+	for _, release := range releases {
+		r := release
+		items = append(items, menuItem{
+			label:  r.Label,
+			detail: r.Description,
+			active: config.ActiveName() == r.DefaultID(),
+			run: func(m *menuModel) tea.Cmd {
+				m.openMain()
+				m.setStickyNotice(noticeInfo, "Regenerating "+r.Version+"...")
+				return regenerateCmd(r, m.sys)
+			},
+		})
+	}
+	items = append(items, menuItem{
+		label:  "< Back",
+		detail: "Return to the main menu.",
+		run: func(m *menuModel) tea.Cmd {
+			m.openMain()
+			return nil
+		},
+	})
+	return items
+}
+
+func (m menuModel) statusItems() []menuItem {
+	return []menuItem{
+		{
+			label:  "< Back",
+			detail: "Return to the main menu.",
+			run: func(m *menuModel) tea.Cmd {
+				m.openMain()
+				return nil
+			},
+		},
+	}
+}
+
+func (m menuModel) View() string {
+	var b strings.Builder
+	contentWidth := m.contentWidth()
+
+	b.WriteString(m.topBar(contentWidth))
+	b.WriteString("\n\n")
+	b.WriteString(m.screenTitle())
+	b.WriteString("\n\n")
+
+	if body := m.screenBody(); body != "" {
+		b.WriteString(body)
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString(renderItems(m.items(), m.selected, contentWidth))
+	if detail := m.selectedDetail(); detail != "" {
+		b.WriteString("\n\n")
+		b.WriteString(detailBoxStyle.Width(contentWidth).Render(detail))
+	}
+	if m.notice != "" {
+		b.WriteString("\n\n")
+		b.WriteString(m.renderNotice())
+	}
+	b.WriteString("\n\n")
+	b.WriteString(m.footer(contentWidth))
+
+	panel := panelStyle.Width(m.panelWidth()).Render(b.String())
+	return m.renderCanvas(panel)
+}
+
+func (m menuModel) panelWidth() int {
+	if m.width <= 0 {
+		return defaultPanelWidth
+	}
+	available := m.width - 4
+	return clampInt(available, minPanelWidth, maxPanelWidth)
+}
+
+func (m menuModel) itemWidth() int {
+	return maxInt(36, m.panelWidth()-6)
+}
+
+func (m menuModel) contentWidth() int {
+	return m.itemWidth()
+}
+
+func (m menuModel) renderCanvas(panel string) string {
+	width := maxInt(m.width, m.panelWidth()+4)
+	height := maxInt(m.height, lipgloss.Height(panel)+4)
+	return appStyle.Width(width).Height(height).Render(panel)
+}
+
+func (m menuModel) selectedDetail() string {
+	items := m.items()
+	if len(items) == 0 || m.selected >= len(items) {
+		return ""
+	}
+	return items[m.selected].detail
+}
+
+func (m menuModel) topBar(width int) string {
+	left := brandTitle()
+	right := m.profileTitle(width / 2)
+	if lipgloss.Width(left)+1+lipgloss.Width(right) > width {
+		left = brandTitle()
+	}
+	if lipgloss.Width(left)+1+lipgloss.Width(right) > width {
+		return renderSolidRow(width, colorSurface, left)
+	}
+	return renderSplitRow(width, colorSurface, left, right)
+}
+
+func brandTitle() string {
+	return strings.Join([]string{
+		brandEXBOStyle.Render("EXBO"),
+		brandCommunityStyle.Render("Community"),
+	}, "")
+}
+
+func (m menuModel) footer(width int) string {
+	help := helpStyle.Render("Up/Down or K/J: navigate | Enter: select | Esc: back | Q: quit")
+	version := versionStyle.Render(buildLabel())
+	if lipgloss.Width(help)+1+lipgloss.Width(version) > width {
+		help = helpStyle.Render("Enter: select | Esc: back | Q: quit")
+	}
+	if lipgloss.Width(help)+1+lipgloss.Width(version) > width {
+		return renderSplitRow(width, colorSurface, "", version)
+	}
+	return renderSplitRow(width, colorSurface, help, version)
+}
+
+func buildLabel() string {
+	if buildinfo.Commit == "" || buildinfo.Commit == "unknown" {
+		return buildinfo.Version
+	}
+	return buildinfo.Version + " - " + buildinfo.Commit
+}
+
+func (m menuModel) profileTitle(maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
 	}
 
 	active := config.ActiveName()
-	items := make([]item, 0, len(names)+1)
-	for _, name := range names {
-		n := name
-		label := "  " + n
-		if n == active {
-			label = "* " + n
+	if active == "" {
+		active = "not selected"
+	}
+
+	label := "Profile "
+	if maxWidth <= lipgloss.Width(label)+5 {
+		return profileLabelStyle.Render(strings.TrimSpace(label))
+	}
+
+	badgeMaxWidth := maxWidth - lipgloss.Width(label)
+	active = truncateMiddle(active, badgeMaxWidth)
+
+	return strings.Join([]string{
+		profileLabelStyle.Render(label),
+		profileValueStyle.Render(active),
+	}, "")
+}
+
+func (m menuModel) screenTitle() string {
+	switch m.screen {
+	case screenStartupWarning:
+		return sectionStyle.Render("Setup Warning")
+	case screenConfigs:
+		if m.configPrefix == "" {
+			return sectionStyle.Render("Select Config")
 		}
-		items = append(items, item{label, func() bool {
-			if err := config.SetActive(n); err != nil {
-				fmt.Printf("[error] %v\n", err)
-				return true
-			}
-			fmt.Printf("[config] Active config set to: %s\n", n)
-			return false
-		}})
+		return sectionStyle.Render("Select Config") + " " + mutedStyle.Render(m.configPrefix)
+	case screenReleases:
+		return sectionStyle.Render("Regenerate Config")
+	case screenStatus:
+		return sectionStyle.Render("Status")
+	default:
+		return sectionStyle.Render("Main Menu")
 	}
-	items = append(items, item{"< Back", func() bool { return false }})
-
-	fmt.Println()
-	fmt.Println("Select config (* = active):")
-	runMenu(items)
 }
 
-func regenerate(sys sysinfo.Info) {
-	fresh := sysinfo.Detect()
-	cfg := config.Generate(fresh)
-
-	fmt.Printf("[config] Detected: %s\n", fresh.Describe())
-	fmt.Printf("[config] Heap: %d GB, GC threads: %d parallel / %d concurrent\n",
-		cfg.HeapSizeGB, cfg.ParallelGCThreads, cfg.ConcGCThreads)
-
-	if fresh.TotalGB() < 8 {
-		fmt.Println("[warning] Less than 8 GB RAM — enable the page file to avoid stalls.")
-	} else if fresh.TotalGB() <= 16 {
-		fmt.Println("[note] 16 GB RAM: page file recommended for comfort.")
+func (m menuModel) screenBody() string {
+	switch m.screen {
+	case screenStartupWarning:
+		return warningBoxStyle.Width(m.contentWidth()).Render(m.startupWarning)
+	case screenConfigs:
+		if len(m.configEntries) == 0 {
+			return mutedStyle.Render("No configs found in this folder.")
+		}
+	case screenReleases:
+		return m.releaseBody()
+	case screenStatus:
+		return m.statusBody()
 	}
-
-	if err := cfg.Save("default"); err != nil {
-		fmt.Printf("[error] Failed to save: %v\n", err)
-		return
-	}
-	if err := config.SetActive("default"); err != nil {
-		fmt.Printf("[error] Failed to mark active: %v\n", err)
-		return
-	}
-	fmt.Println("[config] Regenerated default config.")
+	return ""
 }
 
-func runMenu(items []item) bool {
-	restoreCursor := hideCursor()
-	defer restoreCursor()
-	restoreMode, hIn := rawMode()
-	defer restoreMode()
+func (m menuModel) releaseBody() string {
+	lines := []string{"Detected: " + m.sys.Describe()}
+	switch {
+	case m.sys.TotalGB() < 8:
+		lines = append(lines, warningStyle.Render("Less than 8 GB RAM: enable the page file to avoid stalls."))
+	case m.sys.TotalGB() <= 16:
+		lines = append(lines, mutedStyle.Render("16 GB RAM: page file recommended for comfort."))
+	}
+	return strings.Join(lines, "\n")
+}
 
-	selected := 0
-	drawItems(items, selected)
+func (m menuModel) statusBody() string {
+	lines := statusLines(m.statusEntries)
+	for i := range lines {
+		lines[i] = mutedStyle.Render(lines[i])
+	}
+	return strings.Join(lines, "\n")
+}
 
-	for {
-		vk := readKey(hIn)
-		switch vk {
-		case 0x26: // VK_UP
-			if selected > 0 {
-				selected--
-			}
-		case 0x28: // VK_DOWN
-			if selected < len(items)-1 {
-				selected++
-			}
-		case 0x0D: // VK_RETURN
-			clearItems(len(items))
-			restoreMode()
-			return items[selected].action()
-		case 0x1B: // VK_ESCAPE
-			clearItems(len(items))
-			return false
+func (m menuModel) renderNotice() string {
+	switch m.noticeKind {
+	case noticeSuccess:
+		return successStyle.Render(m.notice)
+	case noticeWarning:
+		return warningStyle.Render(m.notice)
+	case noticeError:
+		return errorStyle.Render(m.notice)
+	default:
+		return infoStyle.Render(m.notice)
+	}
+}
+
+func (m *menuModel) setNotice(kind noticeKind, text string) tea.Cmd {
+	if text == "" {
+		m.clearNotice()
+		return nil
+	}
+
+	m.noticeID++
+	id := m.noticeID
+	m.noticeKind = kind
+	m.notice = text
+
+	if !noticeAutoClears(kind) {
+		return nil
+	}
+	return clearNoticeAfter(id)
+}
+
+func (m *menuModel) setStickyNotice(kind noticeKind, text string) {
+	m.noticeID++
+	m.noticeKind = kind
+	m.notice = text
+}
+
+func (m *menuModel) clearNotice() {
+	m.noticeID++
+	m.notice = ""
+}
+
+func noticeAutoClears(kind noticeKind) bool {
+	return kind == noticeSuccess || kind == noticeError
+}
+
+func clearNoticeAfter(id int) tea.Cmd {
+	return tea.Tick(transientNoticeTTL, func(time.Time) tea.Msg {
+		return clearNoticeMsg{id: id}
+	})
+}
+
+func renderItems(items []menuItem, selected int, width int) string {
+	if len(items) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, len(items))
+	for i, item := range items {
+		lines = append(lines, renderItem(item, i == selected, width))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func renderItem(item menuItem, selected bool, width int) string {
+	bg := colorSurface
+	markerStyle := itemMarkerStyle
+	labelStyle := itemLabelStyle
+	activeStyle := itemActiveStyle
+	if selected {
+		bg = colorSelected
+		markerStyle = selectedMarkerStyle
+		labelStyle = selectedLabelStyle
+		activeStyle = selectedActiveStyle
+	}
+
+	cursor := " "
+	if selected {
+		cursor = ">"
+	}
+	active := " "
+	if item.active {
+		active = "*"
+	}
+
+	label := labelStyle.Render(item.label)
+	if item.active {
+		label = activeStyle.Render(item.label)
+	}
+	return renderSolidRow(
+		width,
+		bg,
+		markerStyle.Render(cursor),
+		rowTextStyle(bg, colorMuted).Render(" "),
+		markerStyle.Render(active),
+		rowTextStyle(bg, colorMuted).Render(" "),
+		label,
+	)
+}
+
+func installCmd() tea.Cmd {
+	return func() tea.Msg {
+		code, err := elevate.Run("install")
+		switch {
+		case err != nil:
+			return actionResultMsg{kind: noticeError, text: err.Error()}
+		case code != 0:
+			return actionResultMsg{kind: noticeError, text: fmt.Sprintf("Install failed with exit code %d", code)}
 		default:
+			return actionResultMsg{kind: noticeSuccess, text: "Install completed."}
+		}
+	}
+}
+
+func uninstallCmd() tea.Cmd {
+	return func() tea.Msg {
+		if err := installer.Uninstall(); err != nil {
+			return actionResultMsg{kind: noticeError, text: err.Error()}
+		}
+		return actionResultMsg{kind: noticeSuccess, text: "Uninstall completed."}
+	}
+}
+
+func regenerateCmd(release profile.Release, sys sysinfo.Info) tea.Cmd {
+	return func() tea.Msg {
+		generated, err := profile.Regenerate(release.Version, sys)
+		if err != nil {
+			return actionResultMsg{kind: noticeError, text: err.Error()}
+		}
+		return actionResultMsg{
+			kind: noticeSuccess,
+			text: fmt.Sprintf(
+				"Regenerated %s (%d profile(s)); active config: %s",
+				release.Version,
+				len(generated),
+				release.DefaultID(),
+			),
+		}
+	}
+}
+
+func statusLines(entries []installer.Entry) []string {
+	lines := make([]string, 0, len(entries)+1)
+	anyInstalled := false
+	for _, e := range entries {
+		if e.Installed {
+			lines = append(lines, fmt.Sprintf("[status] %s -> %s", e.Target, e.Debugger))
+			anyInstalled = true
 			continue
 		}
-		drawItems(items, selected)
+		lines = append(lines, fmt.Sprintf("[status] %s: not installed", e.Target))
 	}
+	if !anyInstalled {
+		lines = append(lines, "[status] Not installed")
+	}
+	return lines
 }
 
-func drawItems(items []item, selected int) {
-	for i := range items {
-		fmt.Print("\033[2K\r")
-		if i == selected {
-			fmt.Printf("  > %s", items[i].label)
-		} else {
-			fmt.Printf("    %s", items[i].label)
-		}
-		if i < len(items)-1 {
-			fmt.Print("\n")
-		}
+func startupWarning() string {
+	expectedService, warning := localServiceCheck()
+	if warning != "" {
+		return warning
 	}
-	fmt.Printf("\033[%dA\r", len(items)-1)
+
+	if other := mismatchedDebugger(expectedService, installer.Status()); other != "" {
+		return fmt.Sprintf(
+			"Installed hook points to %s. Select Install to make this folder the active wrapper.",
+			shortPath(other),
+		)
+	}
+	return ""
 }
 
-func clearItems(n int) {
-	for i := 0; i < n; i++ {
-		fmt.Print("\033[2K\r")
-		if i < n-1 {
-			fmt.Print("\n")
+func localServiceCheck() (string, string) {
+	expectedService, exists, err := installer.LocalServiceExists()
+	if err != nil {
+		return "", "Could not check local service.exe: " + err.Error()
+	}
+	if !exists {
+		return "", "service.exe is missing next to this cli.exe. Put service.exe in this folder before installing this copy."
+	}
+	return expectedService, ""
+}
+
+func mismatchedDebugger(expected string, entries []installer.Entry) string {
+	for _, e := range entries {
+		if !e.Installed {
+			continue
+		}
+
+		debugger := debuggerExecutable(e.Debugger)
+		if debugger == "" {
+			continue
+		}
+		if !samePath(expected, debugger) {
+			return debugger
 		}
 	}
-	fmt.Printf("\033[%dA\r", n-1)
+	return ""
 }
+
+func debuggerExecutable(debugger string) string {
+	s := strings.TrimSpace(debugger)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, `"`) {
+		rest := s[1:]
+		if idx := strings.IndexByte(rest, '"'); idx >= 0 {
+			return rest[:idx]
+		}
+		return strings.Trim(s, `"`)
+	}
+
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], `"`)
+}
+
+func samePath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+func shortPath(path string) string {
+	clean := filepath.Clean(path)
+	parent := filepath.Base(filepath.Dir(clean))
+	name := filepath.Base(clean)
+	if parent == "." || parent == "" || name == "." || name == "" {
+		return clean
+	}
+	return filepath.Join("...", parent, name)
+}
+
+func parentConfigDir(prefix string) string {
+	idx := strings.LastIndex(prefix, "/")
+	if idx < 0 {
+		return ""
+	}
+	return prefix[:idx]
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func renderSolidRow(width int, bg lipgloss.TerminalColor, parts ...string) string {
+	content := strings.Join(parts, "")
+	if padding := width - lipgloss.Width(content); padding > 0 {
+		content += lipgloss.NewStyle().
+			Background(bg).
+			Render(strings.Repeat(" ", padding))
+	}
+	return content
+}
+
+func renderSplitRow(width int, bg lipgloss.TerminalColor, left, right string) string {
+	spacing := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if spacing < 1 {
+		return renderSolidRow(width, bg, left)
+	}
+	return strings.Join([]string{
+		left,
+		lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", spacing)),
+		right,
+	}, "")
+}
+
+func rowTextStyle(bg lipgloss.TerminalColor, fg lipgloss.TerminalColor) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(fg).Background(bg)
+}
+
+func truncateMiddle(s string, maxWidth int) string {
+	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+
+	runes := []rune(s)
+	if maxWidth <= 3 {
+		return string(runes[:minInt(maxWidth, len(runes))])
+	}
+
+	left := (maxWidth - 3) / 2
+	right := maxWidth - 3 - left
+	return string(runes[:minInt(left, len(runes))]) + "..." + string(runes[maxInt(0, len(runes)-right):])
+}
+
+var (
+	minPanelWidth     = 58
+	defaultPanelWidth = 92
+	maxPanelWidth     = 112
+
+	colorCanvas   = lipgloss.Color("#0E1116")
+	colorSurface  = lipgloss.Color("#141A22")
+	colorRaised   = lipgloss.Color("#1B2630")
+	colorSelected = lipgloss.Color("#1A2028")
+	colorLine     = lipgloss.Color("#52798A")
+	colorCream    = lipgloss.Color("#E8DFC9")
+	colorText     = lipgloss.Color("#C9D1D9")
+	colorMuted    = lipgloss.Color("#8B98A7")
+	colorBlue     = lipgloss.Color("#8CBFD4")
+	colorRed      = lipgloss.Color("#C98282")
+	colorGreen    = lipgloss.Color("#9BCBB1")
+	colorAmber    = lipgloss.Color("#D9B97A")
+
+	appStyle = lipgloss.NewStyle().
+			Background(colorCanvas).
+			Padding(2, 2, 1, 2)
+
+	panelStyle = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorSurface).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorLine).
+			Padding(1, 2)
+
+	brandEXBOStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorCream).
+			Background(colorLine).
+			Padding(0, 1)
+
+	brandCommunityStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorCream).
+				Background(lipgloss.Color("#7A3D3D")).
+				Padding(0, 1)
+
+	versionStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Background(colorSurface)
+
+	profileLabelStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Background(colorSurface)
+
+	profileValueStyle = lipgloss.NewStyle().
+				Foreground(colorText).
+				Background(colorSurface)
+
+	detailBoxStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Background(colorRaised).
+			Padding(0, 1)
+
+	warningBoxStyle = lipgloss.NewStyle().
+			Foreground(colorAmber).
+			Background(colorRaised).
+			Padding(0, 1)
+
+	sectionStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorBlue)
+
+	itemStyle = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorSurface).
+			Padding(0, 1)
+
+	selectedStyle = lipgloss.NewStyle().
+			Padding(0, 1).
+			Foreground(colorText).
+			Background(colorSelected)
+
+	itemMarkerStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Background(colorSurface)
+
+	selectedMarkerStyle = lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Background(colorSelected).
+				Bold(true)
+
+	itemLabelStyle = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorSurface)
+
+	selectedLabelStyle = lipgloss.NewStyle().
+				Foreground(colorText).
+				Background(colorSelected)
+
+	itemDetailStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Background(colorSurface)
+
+	selectedDetailStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Background(colorSelected)
+
+	itemActiveStyle = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Background(colorSurface).
+			Bold(true)
+
+	selectedActiveStyle = lipgloss.NewStyle().
+				Foreground(colorGreen).
+				Background(colorSelected).
+				Bold(true)
+
+	mutedStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	activeStyle = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Bold(true)
+
+	infoStyle = lipgloss.NewStyle().
+			Foreground(colorBlue)
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Bold(true)
+
+	warningStyle = lipgloss.NewStyle().
+			Foreground(colorAmber).
+			Bold(true)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(colorRed).
+			Bold(true)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+)

@@ -77,18 +77,48 @@ func Install() error {
 	return nil
 }
 
+// ExpectedServicePath returns the service.exe path expected next to the
+// currently running binary (normally cli.exe).
+func ExpectedServicePath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve self: %w", err)
+	}
+	return filepath.Join(filepath.Dir(self), serviceName), nil
+}
+
+// LocalServiceExists reports whether service.exe exists next to the currently
+// running binary. A missing file is reported as exists=false without an error.
+func LocalServiceExists() (path string, exists bool, err error) {
+	path, err = ExpectedServicePath()
+	if err != nil {
+		return "", false, err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return path, false, nil
+		}
+		return path, false, fmt.Errorf("check %s: %w", serviceName, err)
+	}
+	if info.IsDir() {
+		return path, false, fmt.Errorf("%s is a directory, expected executable", path)
+	}
+	return path, true, nil
+}
+
 // resolveService returns the absolute path to service.exe sitting in
 // the same directory as the caller (cli.exe). Returns an error with a
 // human message if service.exe is missing — this catches the common
 // mistake of copying only cli.exe out of the release zip.
 func resolveService() (string, error) {
-	self, err := os.Executable()
+	path, exists, err := LocalServiceExists()
 	if err != nil {
-		return "", fmt.Errorf("resolve self: %w", err)
+		return "", err
 	}
-	path := filepath.Join(filepath.Dir(self), serviceName)
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("%s must live next to cli.exe: %w", serviceName, err)
+	if !exists {
+		return "", fmt.Errorf("%s must live next to cli.exe (%s): %w", serviceName, path, os.ErrNotExist)
 	}
 	return path, nil
 }

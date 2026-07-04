@@ -18,6 +18,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/logging"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/phantom"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/process"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/profile"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 )
 
@@ -54,12 +55,12 @@ func launch(exePath string, args []string) int {
 		"large_pages", sys.LargePages,
 	)
 
-	if err := config.Ensure(sys); err != nil {
+	if err := profile.Ensure(sys); err != nil {
 		slog.Warn("config ensure failed", "err", err)
 		fmt.Fprintf(os.Stderr, "[config] %v\n", err)
 	}
 
-	cfg, loadedName, cfgErr := config.LoadActive()
+	cfg, loadedName, cfgErr := config.LoadActive(profile.LatestDefaultID())
 	switch {
 	case cfgErr != nil:
 		slog.Warn("config load failed, launcher args kept as-is", "err", cfgErr)
@@ -67,7 +68,7 @@ func launch(exePath string, args []string) int {
 		slog.Warn("config has zero heap, skipping flag injection", "name", loadedName)
 	default:
 		if requested := config.ActiveName(); requested != "" && requested != loadedName {
-			slog.Warn("active config missing, fell back to default",
+			slog.Warn("active config missing, fell back to generated default",
 				"requested", requested,
 				"loaded", loadedName,
 			)
