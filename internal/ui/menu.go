@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/config"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/elevate"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/i18n"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/installer"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/profile"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
@@ -27,6 +27,7 @@ const (
 	screenConfigs
 	screenReleases
 	screenStatus
+	screenLanguage
 )
 
 type noticeKind int
@@ -53,6 +54,8 @@ type menuModel struct {
 	selected       int
 	width          int
 	height         int
+	catalog        *i18n.Catalog
+	lang           i18n.Language
 	configPrefix   string
 	configEntries  []config.Entry
 	statusEntries  []installer.Entry
@@ -77,20 +80,29 @@ func Run() error {
 	if err := profile.Ensure(sys); err != nil {
 		return err
 	}
+	catalog, err := i18n.Load()
+	if err != nil {
+		return err
+	}
 
 	prepareTerminal()
-	model := newMenuModel(sys)
-	if warning := startupWarning(); warning != "" {
+	lang := catalog.Resolve(i18n.Current())
+	model := newMenuModel(sys, catalog, lang)
+	if warning := startupWarning(catalog, lang); warning != "" {
 		model.screen = screenStartupWarning
 		model.startupWarning = warning
 	}
 
-	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
+	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return err
 }
 
-func newMenuModel(sys sysinfo.Info) menuModel {
-	return menuModel{sys: sys}
+func newMenuModel(sys sysinfo.Info, catalog *i18n.Catalog, lang i18n.Language) menuModel {
+	return menuModel{
+		sys:     sys,
+		catalog: catalog,
+		lang:    lang,
+	}
 }
 
 func (m menuModel) Init() tea.Cmd {
@@ -158,6 +170,8 @@ func (m *menuModel) goBack() {
 			return
 		}
 		m.openConfigDir(parentConfigDir(m.configPrefix))
+	case screenLanguage:
+		m.openMain()
 	default:
 		m.openMain()
 	}
@@ -202,6 +216,12 @@ func (m *menuModel) openStatus() {
 	m.clearNotice()
 }
 
+func (m *menuModel) openLanguage() {
+	m.screen = screenLanguage
+	m.selected = 0
+	m.clearNotice()
+}
+
 func (m menuModel) items() []menuItem {
 	switch m.screen {
 	case screenStartupWarning:
@@ -212,6 +232,8 @@ func (m menuModel) items() []menuItem {
 		return m.releaseItems()
 	case screenStatus:
 		return m.statusItems()
+	case screenLanguage:
+		return m.languageItems()
 	default:
 		return m.mainItems()
 	}
@@ -220,20 +242,20 @@ func (m menuModel) items() []menuItem {
 func (m menuModel) startupWarningItems() []menuItem {
 	return []menuItem{
 		{
-			label:  "Install",
-			detail: "Make this folder the active wrapper installation.",
+			label:  m.t(i18n.MainInstallLabel),
+			detail: m.t(i18n.StartupInstallDetail),
 			run: func(m *menuModel) tea.Cmd {
-				if _, warning := localServiceCheck(); warning != "" {
+				if _, warning := localServiceCheck(m.catalog, m.lang); warning != "" {
 					return m.setNotice(noticeError, warning)
 				}
 				m.openMain()
-				m.setStickyNotice(noticeInfo, "Requesting administrator privileges...")
-				return installCmd()
+				m.setStickyNotice(noticeInfo, m.t(i18n.NoticeRequestAdmin))
+				return installCmd(m.catalog, m.lang)
 			},
 		},
 		{
-			label:  "Ignore",
-			detail: "Continue without changing the current installation.",
+			label:  m.t(i18n.StartupIgnoreLabel),
+			detail: m.t(i18n.StartupIgnoreDetail),
 			run: func(m *menuModel) tea.Cmd {
 				m.ignoreStartupWarning()
 				return nil
@@ -245,55 +267,105 @@ func (m menuModel) startupWarningItems() []menuItem {
 func (m menuModel) mainItems() []menuItem {
 	return []menuItem{
 		{
-			label:  "Install",
-			detail: "Request administrator privileges and register the IFEO hook.",
+			label:  m.t(i18n.MainInstallLabel),
+			detail: m.t(i18n.MainInstallDetail),
 			run: func(m *menuModel) tea.Cmd {
-				if _, warning := localServiceCheck(); warning != "" {
+				if _, warning := localServiceCheck(m.catalog, m.lang); warning != "" {
 					return m.setNotice(noticeError, warning)
 				}
-				m.setStickyNotice(noticeInfo, "Requesting administrator privileges...")
-				return installCmd()
+				m.setStickyNotice(noticeInfo, m.t(i18n.NoticeRequestAdmin))
+				return installCmd(m.catalog, m.lang)
 			},
 		},
 		{
-			label:  "Uninstall",
-			detail: "Remove the IFEO hook from configured game executables.",
+			label:  m.t(i18n.MainUninstallLabel),
+			detail: m.t(i18n.MainUninstallDetail),
 			run: func(m *menuModel) tea.Cmd {
-				m.setStickyNotice(noticeInfo, "Removing IFEO hook...")
-				return uninstallCmd()
+				m.setStickyNotice(noticeInfo, m.t(i18n.NoticeRemovingHook))
+				return uninstallCmd(m.catalog, m.lang)
 			},
 		},
 		{
-			label:  "Status",
-			detail: "Show current IFEO hook status for every target executable.",
+			label:  m.t(i18n.MainStatusLabel),
+			detail: m.t(i18n.MainStatusDetail),
 			run: func(m *menuModel) tea.Cmd {
 				m.openStatus()
 				return nil
 			},
 		},
 		{
-			label:  "Select Config",
-			detail: "Browse configs/ folders and choose the active JVM profile.",
+			label:  m.t(i18n.MainSelectConfigLabel),
+			detail: m.t(i18n.MainSelectConfigDetail),
 			run: func(m *menuModel) tea.Cmd {
 				m.openConfigDir("")
 				return nil
 			},
 		},
 		{
-			label:  "Regenerate Config",
-			detail: "Pick a generator release and rebuild its generated profiles.",
+			label:  m.t(i18n.MainRegenerateLabel),
+			detail: m.t(i18n.MainRegenerateDetail),
 			run: func(m *menuModel) tea.Cmd {
 				m.openReleases()
 				return nil
 			},
 		},
 		{
-			label:  "Exit",
-			detail: "Close the wrapper menu.",
+			label:  m.t(i18n.MainLanguageLabel),
+			detail: m.t(i18n.MainLanguageDetail),
+			run: func(m *menuModel) tea.Cmd {
+				m.openLanguage()
+				return nil
+			},
+		},
+		{
+			label:  m.t(i18n.MainExitLabel),
+			detail: m.t(i18n.MainExitDetail),
 			run: func(m *menuModel) tea.Cmd {
 				return tea.Quit
 			},
 		},
+	}
+}
+
+func (m menuModel) languageItems() []menuItem {
+	available := m.catalog.Available()
+	items := make([]menuItem, 0, len(available)+1)
+	for _, lang := range available {
+		l := lang
+		items = append(items, menuItem{
+			label:  m.catalog.DisplayName(l),
+			detail: m.languageDetail(l),
+			active: l == m.lang,
+			run: func(m *menuModel) tea.Cmd {
+				if err := i18n.Set(l); err != nil {
+					return m.setNotice(noticeError, err.Error())
+				}
+				m.lang = l
+				m.openMain()
+				return m.setNotice(
+					noticeSuccess,
+					m.t(i18n.NoticeLanguageSelected, m.catalog.DisplayName(l)),
+				)
+			},
+		})
+	}
+	items = append(items, menuItem{
+		label:  m.t(i18n.BackLabel),
+		detail: m.t(i18n.BackMain),
+		run: func(m *menuModel) tea.Cmd {
+			m.openMain()
+			return nil
+		},
+	})
+	return items
+}
+
+func (m menuModel) languageDetail(lang i18n.Language) string {
+	switch lang {
+	case i18n.Russian:
+		return m.t(i18n.LanguageRussianDetail)
+	default:
+		return m.t(i18n.LanguageEnglishDetail)
 	}
 }
 
@@ -305,7 +377,7 @@ func (m menuModel) configItems() []menuItem {
 		if e.IsDir {
 			items = append(items, menuItem{
 				label:  e.Name + "/",
-				detail: "Folder",
+				detail: m.t(i18n.FolderDetail),
 				active: active == e.ID || strings.HasPrefix(active, e.ID+"/"),
 				run: func(m *menuModel) tea.Cmd {
 					m.openConfigDir(e.ID)
@@ -323,13 +395,13 @@ func (m menuModel) configItems() []menuItem {
 					return m.setNotice(noticeError, err.Error())
 				}
 				m.openMain()
-				return m.setNotice(noticeSuccess, "Active config set to "+e.ID)
+				return m.setNotice(noticeSuccess, m.t(i18n.NoticeActiveConfig, e.ID))
 			},
 		})
 	}
 	items = append(items, menuItem{
-		label:  "< Back",
-		detail: "Return to the previous screen.",
+		label:  m.t(i18n.BackLabel),
+		detail: m.t(i18n.BackPrevious),
 		run: func(m *menuModel) tea.Cmd {
 			m.goBack()
 			return nil
@@ -345,18 +417,18 @@ func (m menuModel) releaseItems() []menuItem {
 		r := release
 		items = append(items, menuItem{
 			label:  r.Label,
-			detail: r.Description,
+			detail: m.catalog.ReleaseDescription(m.lang, r.Version, r.Description),
 			active: config.ActiveName() == r.DefaultID(),
 			run: func(m *menuModel) tea.Cmd {
 				m.openMain()
-				m.setStickyNotice(noticeInfo, "Regenerating "+r.Version+"...")
-				return regenerateCmd(r, m.sys)
+				m.setStickyNotice(noticeInfo, m.t(i18n.NoticeRegenerating, r.Version))
+				return regenerateCmd(m.catalog, m.lang, r, m.sys)
 			},
 		})
 	}
 	items = append(items, menuItem{
-		label:  "< Back",
-		detail: "Return to the main menu.",
+		label:  m.t(i18n.BackLabel),
+		detail: m.t(i18n.BackMain),
 		run: func(m *menuModel) tea.Cmd {
 			m.openMain()
 			return nil
@@ -368,8 +440,8 @@ func (m menuModel) releaseItems() []menuItem {
 func (m menuModel) statusItems() []menuItem {
 	return []menuItem{
 		{
-			label:  "< Back",
-			detail: "Return to the main menu.",
+			label:  m.t(i18n.BackLabel),
+			detail: m.t(i18n.BackMain),
 			run: func(m *menuModel) tea.Cmd {
 				m.openMain()
 				return nil
@@ -438,6 +510,10 @@ func (m menuModel) selectedDetail() string {
 	return items[m.selected].detail
 }
 
+func (m menuModel) t(key i18n.Key, args ...any) string {
+	return m.catalog.T(m.lang, key, args...)
+}
+
 func (m menuModel) topBar(width int) string {
 	left := brandTitle()
 	right := m.profileTitle(width / 2)
@@ -458,10 +534,10 @@ func brandTitle() string {
 }
 
 func (m menuModel) footer(width int) string {
-	help := helpStyle.Render("Up/Down or K/J: navigate | Enter: select | Esc: back | Q: quit")
+	help := helpStyle.Render(m.t(i18n.FooterHelp))
 	version := versionStyle.Render(buildLabel())
 	if lipgloss.Width(help)+1+lipgloss.Width(version) > width {
-		help = helpStyle.Render("Enter: select | Esc: back | Q: quit")
+		help = helpStyle.Render(m.t(i18n.FooterHelpShort))
 	}
 	if lipgloss.Width(help)+1+lipgloss.Width(version) > width {
 		return renderSplitRow(width, colorSurface, "", version)
@@ -483,10 +559,10 @@ func (m menuModel) profileTitle(maxWidth int) string {
 
 	active := config.ActiveName()
 	if active == "" {
-		active = "not selected"
+		active = m.t(i18n.ProfileUnset)
 	}
 
-	label := "Profile "
+	label := m.t(i18n.ProfileLabel)
 	if maxWidth <= lipgloss.Width(label)+5 {
 		return profileLabelStyle.Render(strings.TrimSpace(label))
 	}
@@ -503,18 +579,20 @@ func (m menuModel) profileTitle(maxWidth int) string {
 func (m menuModel) screenTitle() string {
 	switch m.screen {
 	case screenStartupWarning:
-		return sectionStyle.Render("Setup Warning")
+		return sectionStyle.Render(m.t(i18n.TitleSetup))
 	case screenConfigs:
 		if m.configPrefix == "" {
-			return sectionStyle.Render("Select Config")
+			return sectionStyle.Render(m.t(i18n.TitleConfigs))
 		}
-		return sectionStyle.Render("Select Config") + " " + mutedStyle.Render(m.configPrefix)
+		return sectionStyle.Render(m.t(i18n.TitleConfigs)) + " " + mutedStyle.Render(m.configPrefix)
 	case screenReleases:
-		return sectionStyle.Render("Regenerate Config")
+		return sectionStyle.Render(m.t(i18n.TitleReleases))
 	case screenStatus:
-		return sectionStyle.Render("Status")
+		return sectionStyle.Render(m.t(i18n.TitleStatus))
+	case screenLanguage:
+		return sectionStyle.Render(m.t(i18n.TitleLanguage))
 	default:
-		return sectionStyle.Render("Main Menu")
+		return sectionStyle.Render(m.t(i18n.TitleMain))
 	}
 }
 
@@ -524,29 +602,31 @@ func (m menuModel) screenBody() string {
 		return warningBoxStyle.Width(m.contentWidth()).Render(m.startupWarning)
 	case screenConfigs:
 		if len(m.configEntries) == 0 {
-			return mutedStyle.Render("No configs found in this folder.")
+			return mutedStyle.Render(m.t(i18n.NoConfigs))
 		}
 	case screenReleases:
 		return m.releaseBody()
 	case screenStatus:
 		return m.statusBody()
+	case screenLanguage:
+		return mutedStyle.Render(m.t(i18n.LanguageBody))
 	}
 	return ""
 }
 
 func (m menuModel) releaseBody() string {
-	lines := []string{"Detected: " + m.sys.Describe()}
+	lines := []string{m.t(i18n.DetectedSystem, m.sys.Describe())}
 	switch {
 	case m.sys.TotalGB() < 8:
-		lines = append(lines, warningStyle.Render("Less than 8 GB RAM: enable the page file to avoid stalls."))
+		lines = append(lines, warningStyle.Render(m.t(i18n.MemoryLowWarning)))
 	case m.sys.TotalGB() <= 16:
-		lines = append(lines, mutedStyle.Render("16 GB RAM: page file recommended for comfort."))
+		lines = append(lines, mutedStyle.Render(m.t(i18n.Memory16Note)))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func (m menuModel) statusBody() string {
-	lines := statusLines(m.statusEntries)
+	lines := statusLines(m.catalog, m.lang, m.statusEntries)
 	for i := range lines {
 		lines[i] = mutedStyle.Render(lines[i])
 	}
@@ -652,30 +732,30 @@ func renderItem(item menuItem, selected bool, width int) string {
 	)
 }
 
-func installCmd() tea.Cmd {
+func installCmd(catalog *i18n.Catalog, lang i18n.Language) tea.Cmd {
 	return func() tea.Msg {
 		code, err := elevate.Run("install")
 		switch {
 		case err != nil:
 			return actionResultMsg{kind: noticeError, text: err.Error()}
 		case code != 0:
-			return actionResultMsg{kind: noticeError, text: fmt.Sprintf("Install failed with exit code %d", code)}
+			return actionResultMsg{kind: noticeError, text: catalog.T(lang, i18n.NoticeInstallFailed, code)}
 		default:
-			return actionResultMsg{kind: noticeSuccess, text: "Install completed."}
+			return actionResultMsg{kind: noticeSuccess, text: catalog.T(lang, i18n.NoticeInstallDone)}
 		}
 	}
 }
 
-func uninstallCmd() tea.Cmd {
+func uninstallCmd(catalog *i18n.Catalog, lang i18n.Language) tea.Cmd {
 	return func() tea.Msg {
 		if err := installer.Uninstall(); err != nil {
 			return actionResultMsg{kind: noticeError, text: err.Error()}
 		}
-		return actionResultMsg{kind: noticeSuccess, text: "Uninstall completed."}
+		return actionResultMsg{kind: noticeSuccess, text: catalog.T(lang, i18n.NoticeUninstallDone)}
 	}
 }
 
-func regenerateCmd(release profile.Release, sys sysinfo.Info) tea.Cmd {
+func regenerateCmd(catalog *i18n.Catalog, lang i18n.Language, release profile.Release, sys sysinfo.Info) tea.Cmd {
 	return func() tea.Msg {
 		generated, err := profile.Regenerate(release.Version, sys)
 		if err != nil {
@@ -683,8 +763,9 @@ func regenerateCmd(release profile.Release, sys sysinfo.Info) tea.Cmd {
 		}
 		return actionResultMsg{
 			kind: noticeSuccess,
-			text: fmt.Sprintf(
-				"Regenerated %s (%d profile(s)); active config: %s",
+			text: catalog.T(
+				lang,
+				i18n.NoticeRegenerated,
 				release.Version,
 				len(generated),
 				release.DefaultID(),
@@ -693,45 +774,42 @@ func regenerateCmd(release profile.Release, sys sysinfo.Info) tea.Cmd {
 	}
 }
 
-func statusLines(entries []installer.Entry) []string {
+func statusLines(catalog *i18n.Catalog, lang i18n.Language, entries []installer.Entry) []string {
 	lines := make([]string, 0, len(entries)+1)
 	anyInstalled := false
 	for _, e := range entries {
 		if e.Installed {
-			lines = append(lines, fmt.Sprintf("[status] %s -> %s", e.Target, e.Debugger))
+			lines = append(lines, catalog.T(lang, i18n.StatusInstalled, e.Target, e.Debugger))
 			anyInstalled = true
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("[status] %s: not installed", e.Target))
+		lines = append(lines, catalog.T(lang, i18n.StatusNotInstalled, e.Target))
 	}
 	if !anyInstalled {
-		lines = append(lines, "[status] Not installed")
+		lines = append(lines, catalog.T(lang, i18n.StatusNone))
 	}
 	return lines
 }
 
-func startupWarning() string {
-	expectedService, warning := localServiceCheck()
+func startupWarning(catalog *i18n.Catalog, lang i18n.Language) string {
+	expectedService, warning := localServiceCheck(catalog, lang)
 	if warning != "" {
 		return warning
 	}
 
 	if other := mismatchedDebugger(expectedService, installer.Status()); other != "" {
-		return fmt.Sprintf(
-			"Installed hook points to %s. Select Install to make this folder the active wrapper.",
-			shortPath(other),
-		)
+		return catalog.T(lang, i18n.WarnHookOther, shortPath(other))
 	}
 	return ""
 }
 
-func localServiceCheck() (string, string) {
+func localServiceCheck(catalog *i18n.Catalog, lang i18n.Language) (string, string) {
 	expectedService, exists, err := installer.LocalServiceExists()
 	if err != nil {
-		return "", "Could not check local service.exe: " + err.Error()
+		return "", catalog.T(lang, i18n.WarnServiceCheck, err.Error())
 	}
 	if !exists {
-		return "", "service.exe is missing next to this cli.exe. Put service.exe in this folder before installing this copy."
+		return "", catalog.T(lang, i18n.WarnServiceMiss)
 	}
 	return expectedService, ""
 }

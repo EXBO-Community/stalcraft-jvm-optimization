@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path build/cli.exe, build/service.exe, examples `
+            -Path build/cli.exe, build/service.exe, examples, langs `
             -DestinationPath build/wrapper.zip `
             -Force
 
