@@ -98,7 +98,7 @@ func splitArgs(args []string) (jvm []string, mainClass string, app []string) {
 	return
 }
 
-func shouldRemove(arg string) bool {
+func shouldRemove(arg string, injectedIDs map[string]struct{}) bool {
 	if _, ok := exactRemove[arg]; ok {
 		return true
 	}
@@ -106,6 +106,9 @@ func shouldRemove(arg string) bool {
 		if strings.HasPrefix(arg, p) {
 			return true
 		}
+	}
+	if _, ok := injectedIDs[flagIdentity(arg)]; ok {
+		return true
 	}
 	return false
 }
@@ -115,10 +118,11 @@ func shouldRemove(arg string) bool {
 // main class and app arguments.
 func FilterArgs(orig, injected []string) []string {
 	jvmArgs, mainClass, app := splitArgs(orig)
+	injectedIDs := flagIdentitySet(injected)
 
 	filtered := make([]string, 0, len(jvmArgs))
 	for _, a := range jvmArgs {
-		if !shouldRemove(a) {
+		if !shouldRemove(a, injectedIDs) {
 			filtered = append(filtered, a)
 		}
 	}
@@ -130,4 +134,39 @@ func FilterArgs(orig, injected []string) []string {
 		result = append(result, mainClass)
 	}
 	return append(result, app...)
+}
+
+func flagIdentitySet(flags []string) map[string]struct{} {
+	identities := make(map[string]struct{}, len(flags))
+	for _, flag := range flags {
+		flag = strings.TrimSpace(flag)
+		if flag == "" {
+			continue
+		}
+		identities[flagIdentity(flag)] = struct{}{}
+	}
+	return identities
+}
+
+func flagIdentity(flag string) string {
+	flag = strings.TrimSpace(flag)
+	switch {
+	case strings.HasPrefix(flag, "-Xms"):
+		return "-Xms"
+	case strings.HasPrefix(flag, "-Xmx"):
+		return "-Xmx"
+	case strings.HasPrefix(flag, "-XX:+"):
+		return "-XX:" + strings.TrimPrefix(flag, "-XX:+")
+	case strings.HasPrefix(flag, "-XX:-"):
+		return "-XX:" + strings.TrimPrefix(flag, "-XX:-")
+	case strings.HasPrefix(flag, "-XX:"):
+		if idx := strings.IndexByte(flag, '='); idx >= 0 {
+			return flag[:idx+1]
+		}
+	case strings.HasPrefix(flag, "-D"):
+		if idx := strings.IndexByte(flag, '='); idx >= 0 {
+			return flag[:idx+1]
+		}
+	}
+	return flag
 }
