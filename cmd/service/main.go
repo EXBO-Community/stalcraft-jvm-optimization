@@ -20,6 +20,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/process"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/profile"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/tunnel"
 )
 
 func main() {
@@ -60,10 +61,12 @@ func launch(exePath string, args []string) int {
 		fmt.Fprintf(os.Stderr, "[config] %v\n", err)
 	}
 
+	flags := make([]string, 0)
+	tunedProfileLoaded := false
 	cfg, loadedName, cfgErr := config.LoadActive(profile.LatestDefaultID())
 	switch {
 	case cfgErr != nil:
-		slog.Warn("config load failed, launcher args kept as-is", "err", cfgErr)
+		slog.Warn("config load failed, tuned JVM flags skipped", "err", cfgErr)
 	case cfg.HeapSizeGB == 0:
 		slog.Warn("config has zero heap, skipping flag injection", "name", loadedName)
 	default:
@@ -73,7 +76,8 @@ func launch(exePath string, args []string) int {
 				"loaded", loadedName,
 			)
 		}
-		flags := jvm.Flags(cfg)
+		flags = jvm.Flags(cfg)
+		tunedProfileLoaded = true
 		slog.Info("config loaded",
 			"name", loadedName,
 			"heap_gb", cfg.HeapSizeGB,
@@ -86,7 +90,37 @@ func launch(exePath string, args []string) int {
 			"large_pages", cfg.UseLargePages,
 			"flags_count", len(flags),
 		)
+	}
+
+	settings, overrideErr := tunnel.LoadOverrides()
+	switch {
+	case overrideErr != nil:
+		slog.Warn("tunnel override load failed", "err", overrideErr)
+	default:
+		overrides, err := settings.JVMFlags()
+		if err != nil {
+			slog.Warn("tunnel override invalid", "err", err)
+			break
+		}
+		flags = append(flags, overrides...)
+		for _, region := range tunnel.Regions() {
+			override, ok := settings.Override(region)
+			if !ok {
+				continue
+			}
+			slog.Info(
+				"tunnel override loaded",
+				"region", region,
+				"pool", override.Pool,
+				"name", override.Name,
+			)
+		}
+	}
+	switch {
+	case tunedProfileLoaded:
 		args = jvm.FilterArgs(args, flags)
+	case len(flags) > 0:
+		args = jvm.ReplaceArgs(args, flags)
 	}
 
 	slog.Info("process starting",

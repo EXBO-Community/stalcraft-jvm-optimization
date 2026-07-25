@@ -92,3 +92,40 @@ func TestFilterArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestReplaceArgsPreservesUnrelatedLauncherFlags(t *testing.T) {
+	t.Parallel()
+
+	original := []string{
+		"-Xmx6g",
+		"-XX:+UseG1GC",
+		"-Droxy_address_override.ru",
+		"-Droxy_address_override.ru=192.0.2.10:29450",
+		"-Droxy_address_override.eu=192.0.2.20:29450",
+		"-Droxy_address_override.na=192.0.2.30:29450",
+		"-Dlauncher.option=keep",
+		"com.example.Main",
+		"--gameDir",
+		`C:\Games\STALZONE`,
+	}
+	injected := []string{
+		"-Droxy_address_override.ru=192.0.2.11:29450",
+		"-Droxy_address_override.eu=192.0.2.21:29450",
+	}
+	want := []string{
+		"-Xmx6g",
+		"-XX:+UseG1GC",
+		"-Droxy_address_override.na=192.0.2.30:29450",
+		"-Dlauncher.option=keep",
+		"-Droxy_address_override.ru=192.0.2.11:29450",
+		"-Droxy_address_override.eu=192.0.2.21:29450",
+		"com.example.Main",
+		"--gameDir",
+		`C:\Games\STALZONE`,
+	}
+
+	got := ReplaceArgs(original, injected)
+	if !slices.Equal(got, want) {
+		t.Fatalf("ReplaceArgs() = %#v, want %#v", got, want)
+	}
+}
