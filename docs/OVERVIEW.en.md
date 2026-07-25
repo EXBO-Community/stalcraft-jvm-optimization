@@ -15,9 +15,18 @@ The wrapper uses the IFEO (Image File Execution Options) mechanism to intercept 
 When `stalzone.exe` / `stalzonew.exe` is launched, Windows starts `service.exe` instead, passing it the original launcher arguments. `service.exe` then:
 
 1. Loads the active configuration file from the `configs/` directory next to the executable.
-2. Strips conflicting flags from the original launcher arguments and injects hardware-tuned JVM flags.
-3. Creates the process directly through `ntdll!NtCreateUserProcess` with the `PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER` attribute to avoid re-interception through IFEO.
-4. Exits as soon as the game process shows its first visible window.
+2. Validates independent game-region tunnel overrides from `overrides.json` without making network requests.
+3. Strips conflicting flags from the original launcher arguments and injects the hardware-tuned JVM flags plus one saved `-Droxy_address_override.<region>` property for every configured region.
+4. Creates the process directly through `ntdll!NtCreateUserProcess` with the `PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER` attribute to avoid re-interception through IFEO.
+5. Exits as soon as the game process shows its first visible window.
+
+## Tunnel Override
+
+Roxy catalogs are requested over HTTPS only when their region is opened in the TUI. The primary address and its mirrors are attempted sequentially as fallbacks, with `login=EXBO-Community` added to every request.
+
+For a measurement, `cli.exe` sends a random 16-byte UUID to `tunnel_port + 1`. The response must arrive within one second and use `UUID[16] | tunnelToBackendRtt:i32 (big-endian) | limitReached:u8`. Client RTT is measured locally. Every endpoint in an opened group, or every endpoint outside excluded groups during a search, is measured concurrently and appears in the UI as soon as it replies. There are no automatic repeat rounds; another probe starts only after reopening the view or explicitly choosing `Measure again`.
+
+Settings live in `overrides.json`, separately from versioned JVM profiles. Overrides for RU, EU, NA, SEA, and NEA are stored independently and can be active at the same time; `Game default` clears only the current region. The `cache/tunnel_stats.json` cache keeps up to 20 measurements per endpoint together with the last connection-limit state and its timestamp; entries older than 24 hours are removed. Nodes that reported a limit last time are measured first and remain unavailable for a new selection until they reply with `limitReached=false`.
 
 ## Logging
 

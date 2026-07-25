@@ -72,7 +72,7 @@ The utility is installed **once** and automatically runs each time the game is l
     - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
     - Example for EGS: `C:\Games\EGS Stalcraft\STALCRAFT`
 2. Create the `jvm_wrapper` directory at the root of the launcher folder (see the tip above).
-3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and an `examples/` directory inside.
+3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and the `examples/`, `langs/` directories inside.
 4. Run `cli.exe`, select `Install` in the menu using the arrow keys and press **Enter**.
 5. A UAC prompt will appear — accept it. This is expected: the IFEO hook is written to `HKLM` which requires administrator privileges.
 
@@ -121,6 +121,14 @@ The same operations are available as CLI commands:
 - `cli.exe config releases`
 - `cli.exe config regenerate v1.1.2`
 - `cli.exe config select v1.1.2/default`
+
+#### Tunnel Override (Experimental)
+
+The `Tunnel override` menu lets you independently select a specific Roxy node for RU, EU, NA, SEA, and NEA at the same time. `Game default` lives inside each region and clears only that region's override. A regional list is requested only after that region is opened. Opening a group measures all of its nodes concurrently and shows the PC-to-tunnel RTT, tunnel-to-backend RTT, and their sum separately. There are no background repeat rounds; another measurement starts only after reopening the view or selecting `Measure again`.
+
+`Search best server` measures every node outside the persistent exclusion list and shows the best five. Results can be ranked by total ping, client RTT, server RTT, stability, or the weight reported by the game backend. A node that reports a connection limit remains visible, but cannot be selected until a fresh successful measurement clears the limit.
+
+Selections and search settings live in `jvm_wrapper/overrides.json`; up to 20 recent measurements per node live in `jvm_wrapper/cache/tunnel_stats.json` and expire after 24 hours. `Regenerate Config` does not touch either file. At game startup, `service.exe` only validates the stored addresses and adds one JVM property per configured region; it performs no network measurements on the launch path.
 
 #### Example configurations
 
