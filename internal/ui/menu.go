@@ -28,6 +28,13 @@ const (
 	screenReleases
 	screenStatus
 	screenLanguage
+	screenTunnelRegions
+	screenTunnelPools
+	screenTunnelEndpoints
+	screenTunnelSearch
+	screenTunnelMode
+	screenTunnelExclusions
+	screenTunnelResults
 )
 
 type noticeKind int
@@ -42,10 +49,12 @@ const (
 const transientNoticeTTL = 5 * time.Second
 
 type menuItem struct {
-	label  string
-	detail string
-	active bool
-	run    func(*menuModel) tea.Cmd
+	label    string
+	detail   string
+	active   bool
+	disabled bool
+	tone     lipgloss.TerminalColor
+	run      func(*menuModel) tea.Cmd
 }
 
 type menuModel struct {
@@ -63,6 +72,7 @@ type menuModel struct {
 	notice         string
 	noticeKind     noticeKind
 	noticeID       int
+	tunnelMenu     tunnelMenuState
 }
 
 type actionResultMsg struct {
@@ -125,6 +135,10 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
+		if cmd, handled := m.updateTunnel(msg); handled {
+			m.clampSelection()
+			return m, cmd
+		}
 		return m, nil
 	}
 }
@@ -151,6 +165,9 @@ func (m menuModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(items) == 0 || m.selected >= len(items) {
 			return m, nil
 		}
+		if items[m.selected].disabled || items[m.selected].run == nil {
+			return m, nil
+		}
 		cmd := items[m.selected].run(&m)
 		return m, cmd
 	default:
@@ -172,12 +189,29 @@ func (m *menuModel) goBack() {
 		m.openConfigDir(parentConfigDir(m.configPrefix))
 	case screenLanguage:
 		m.openMain()
+	case screenTunnelRegions:
+		m.openMain()
+	case screenTunnelPools:
+		m.showTunnelRegions()
+	case screenTunnelEndpoints:
+		m.showTunnelPools()
+	case screenTunnelSearch:
+		m.showTunnelPools()
+	case screenTunnelMode:
+		m.returnFromTunnelMode()
+	case screenTunnelExclusions:
+		m.returnFromTunnelExclusions()
+	case screenTunnelResults:
+		m.showTunnelSearch()
 	default:
 		m.openMain()
 	}
 }
 
 func (m *menuModel) openMain() {
+	m.stopTunnelProbes()
+	m.stopTunnelCatalog()
+	m.tunnelMenu.catalogRequest++
 	m.screen = screenMain
 	m.selected = 0
 	m.configPrefix = ""
@@ -234,6 +268,14 @@ func (m menuModel) items() []menuItem {
 		return m.statusItems()
 	case screenLanguage:
 		return m.languageItems()
+	case screenTunnelRegions,
+		screenTunnelPools,
+		screenTunnelEndpoints,
+		screenTunnelSearch,
+		screenTunnelMode,
+		screenTunnelExclusions,
+		screenTunnelResults:
+		return m.tunnelItems()
 	default:
 		return m.mainItems()
 	}
@@ -307,6 +349,13 @@ func (m menuModel) mainItems() []menuItem {
 			run: func(m *menuModel) tea.Cmd {
 				m.openReleases()
 				return nil
+			},
+		},
+		{
+			label:  m.t(i18n.MainTunnelLabel),
+			detail: m.t(i18n.MainTunnelDetail),
+			run: func(m *menuModel) tea.Cmd {
+				return m.openTunnel()
 			},
 		},
 		{
@@ -451,33 +500,59 @@ func (m menuModel) statusItems() []menuItem {
 }
 
 func (m menuModel) View() string {
-	var b strings.Builder
 	contentWidth := m.contentWidth()
+	body := m.screenBody()
+	detail := m.selectedDetail()
 
-	b.WriteString(m.topBar(contentWidth))
-	b.WriteString("\n\n")
-	b.WriteString(m.screenTitle())
-	b.WriteString("\n\n")
+	var before strings.Builder
+	before.WriteString(m.topBar(contentWidth))
+	before.WriteString("\n\n")
+	before.WriteString(m.screenTitle())
+	before.WriteString("\n\n")
 
-	if body := m.screenBody(); body != "" {
-		b.WriteString(body)
-		b.WriteString("\n\n")
+	if body != "" {
+		before.WriteString(body)
+		before.WriteString("\n\n")
 	}
 
-	b.WriteString(renderItems(m.items(), m.selected, contentWidth))
-	if detail := m.selectedDetail(); detail != "" {
-		b.WriteString("\n\n")
-		b.WriteString(detailBoxStyle.Width(contentWidth).Render(detail))
+	var after strings.Builder
+	if detail != "" {
+		after.WriteString("\n\n")
+		after.WriteString(detailBoxStyle.Width(contentWidth).Render(detail))
 	}
 	if m.notice != "" {
-		b.WriteString("\n\n")
-		b.WriteString(m.renderNotice())
+		after.WriteString("\n\n")
+		after.WriteString(m.renderNotice())
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.footer(contentWidth))
+	after.WriteString("\n\n")
+	after.WriteString(m.footer(contentWidth))
 
-	panel := panelStyle.Width(m.panelWidth()).Render(b.String())
+	items := m.items()
+	itemRows := m.itemRowBudget(before.String(), after.String())
+	renderedItems := renderItemWindow(
+		items,
+		m.selected,
+		contentWidth,
+		itemRows,
+	)
+
+	content := before.String() + renderedItems + after.String()
+	panel := panelStyle.Width(m.panelWidth()).Render(content)
 	return m.renderCanvas(panel)
+}
+
+func (m menuModel) itemRowBudget(before, after string) int {
+	if m.height <= 0 {
+		return len(m.items())
+	}
+
+	fixedPanel := panelStyle.
+		Width(m.panelWidth()).
+		Render(before + after)
+	fixedCanvas := appStyle.
+		Width(maxInt(m.width, m.panelWidth()+4)).
+		Render(fixedPanel)
+	return maxInt(1, m.height-lipgloss.Height(fixedCanvas))
 }
 
 func (m menuModel) panelWidth() int {
@@ -504,10 +579,22 @@ func (m menuModel) renderCanvas(panel string) string {
 
 func (m menuModel) selectedDetail() string {
 	items := m.items()
-	if len(items) == 0 || m.selected >= len(items) {
+	if len(items) == 0 || m.selected < 0 || m.selected >= len(items) {
 		return ""
 	}
 	return items[m.selected].detail
+}
+
+func (m *menuModel) clampSelection() {
+	max := len(m.items()) - 1
+	switch {
+	case max < 0:
+		m.selected = 0
+	case m.selected > max:
+		m.selected = max
+	case m.selected < 0:
+		m.selected = 0
+	}
 }
 
 func (m menuModel) t(key i18n.Key, args ...any) string {
@@ -584,13 +671,25 @@ func (m menuModel) screenTitle() string {
 		if m.configPrefix == "" {
 			return sectionStyle.Render(m.t(i18n.TitleConfigs))
 		}
-		return sectionStyle.Render(m.t(i18n.TitleConfigs)) + " " + mutedStyle.Render(m.configPrefix)
+		return strings.Join([]string{
+			sectionStyle.Render(m.t(i18n.TitleConfigs)),
+			surfaceSpace(),
+			mutedStyle.Render(m.configPrefix),
+		}, "")
 	case screenReleases:
 		return sectionStyle.Render(m.t(i18n.TitleReleases))
 	case screenStatus:
 		return sectionStyle.Render(m.t(i18n.TitleStatus))
 	case screenLanguage:
 		return sectionStyle.Render(m.t(i18n.TitleLanguage))
+	case screenTunnelRegions,
+		screenTunnelPools,
+		screenTunnelEndpoints,
+		screenTunnelSearch,
+		screenTunnelMode,
+		screenTunnelExclusions,
+		screenTunnelResults:
+		return m.tunnelTitle()
 	default:
 		return sectionStyle.Render(m.t(i18n.TitleMain))
 	}
@@ -610,12 +709,20 @@ func (m menuModel) screenBody() string {
 		return m.statusBody()
 	case screenLanguage:
 		return mutedStyle.Render(m.t(i18n.LanguageBody))
+	case screenTunnelRegions,
+		screenTunnelPools,
+		screenTunnelEndpoints,
+		screenTunnelSearch,
+		screenTunnelMode,
+		screenTunnelExclusions,
+		screenTunnelResults:
+		return m.tunnelBody()
 	}
 	return ""
 }
 
 func (m menuModel) releaseBody() string {
-	lines := []string{m.t(i18n.DetectedSystem, m.sys.Describe())}
+	lines := []string{bodyStyle.Render(m.t(i18n.DetectedSystem, m.sys.Describe()))}
 	switch {
 	case m.sys.TotalGB() < 8:
 		lines = append(lines, warningStyle.Render(m.t(i18n.MemoryLowWarning)))
@@ -696,16 +803,63 @@ func renderItems(items []menuItem, selected int, width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+func renderItemWindow(
+	items []menuItem,
+	selected,
+	width,
+	maxRows int,
+) string {
+	if len(items) == 0 || maxRows <= 0 {
+		return ""
+	}
+	selected = clampInt(selected, 0, len(items)-1)
+	if len(items) <= maxRows {
+		return renderItems(items, selected, width)
+	}
+	if maxRows < 3 {
+		start := clampInt(selected-maxRows/2, 0, len(items)-maxRows)
+		return renderItems(items[start:start+maxRows], selected-start, width)
+	}
+
+	itemRows := maxRows - 2
+	start := clampInt(selected-itemRows/2, 0, len(items)-itemRows)
+	end := start + itemRows
+
+	lines := make([]string, 0, maxRows)
+	if start > 0 {
+		lines = append(lines, renderListBoundary(width, "^"))
+	}
+	rendered := renderItems(items[start:end], selected-start, width)
+	if rendered != "" {
+		lines = append(lines, rendered)
+	}
+	if end < len(items) {
+		lines = append(lines, renderListBoundary(width, "v"))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func renderListBoundary(width int, marker string) string {
+	return renderSolidRow(
+		width,
+		colorSurface,
+		rowTextStyle(colorSurface, colorMuted).Render("  "+marker),
+	)
+}
+
 func renderItem(item menuItem, selected bool, width int) string {
 	bg := colorSurface
-	markerStyle := itemMarkerStyle
-	labelStyle := itemLabelStyle
-	activeStyle := itemActiveStyle
+	markerColor := colorMuted
+	var labelColor lipgloss.TerminalColor = colorText
 	if selected {
 		bg = colorSelected
-		markerStyle = selectedMarkerStyle
-		labelStyle = selectedLabelStyle
-		activeStyle = selectedActiveStyle
+		markerColor = colorBlue
+	}
+	if item.tone != nil {
+		labelColor = item.tone
+	}
+	if item.disabled {
+		labelColor = colorMuted
 	}
 
 	cursor := " "
@@ -717,9 +871,17 @@ func renderItem(item menuItem, selected bool, width int) string {
 		active = "*"
 	}
 
-	label := labelStyle.Render(item.label)
+	labelStyle := rowTextStyle(bg, labelColor)
 	if item.active {
-		label = activeStyle.Render(item.label)
+		labelStyle = labelStyle.Bold(true)
+		if !item.disabled && item.tone == nil {
+			labelStyle = labelStyle.Foreground(colorGreen)
+		}
+	}
+	label := labelStyle.Render(truncateMiddle(item.label, maxInt(0, width-4)))
+	markerStyle := rowTextStyle(bg, markerColor)
+	if selected {
+		markerStyle = markerStyle.Bold(true)
 	}
 	return renderSolidRow(
 		width,
@@ -923,6 +1085,10 @@ func rowTextStyle(bg lipgloss.TerminalColor, fg lipgloss.TerminalColor) lipgloss
 	return lipgloss.NewStyle().Foreground(fg).Background(bg)
 }
 
+func surfaceSpace() string {
+	return rowTextStyle(colorSurface, colorText).Render(" ")
+}
+
 func truncateMiddle(s string, maxWidth int) string {
 	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
 		return s
@@ -1003,7 +1169,12 @@ var (
 
 	sectionStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorBlue)
+			Foreground(colorBlue).
+			Background(colorSurface)
+
+	bodyStyle = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorSurface)
 
 	itemStyle = lipgloss.NewStyle().
 			Foreground(colorText).
@@ -1051,27 +1222,34 @@ var (
 				Bold(true)
 
 	mutedStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
+			Foreground(colorMuted).
+			Background(colorSurface)
 
 	activeStyle = lipgloss.NewStyle().
 			Foreground(colorGreen).
+			Background(colorSurface).
 			Bold(true)
 
 	infoStyle = lipgloss.NewStyle().
-			Foreground(colorBlue)
+			Foreground(colorBlue).
+			Background(colorSurface)
 
 	successStyle = lipgloss.NewStyle().
 			Foreground(colorGreen).
+			Background(colorSurface).
 			Bold(true)
 
 	warningStyle = lipgloss.NewStyle().
 			Foreground(colorAmber).
+			Background(colorSurface).
 			Bold(true)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(colorRed).
+			Background(colorSurface).
 			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
+			Foreground(colorMuted).
+			Background(colorSurface)
 )
