@@ -1,12 +1,9 @@
-// Package process launches the game executable (stalzone.exe, or the
-// still-current stalcraft.exe) via NtCreateUserProcess so we can set
-// PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER and escape our own IFEO hook,
-// then boosts the child's priorities and waits until the first visible
-// window appears (or until it exits).
+// Package process launches the game executable via NtCreateUserProcess so we
+// can set PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER, escape our own IFEO hook, and wait
+// until the first visible window appears (or until the process exits).
 package process
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,10 +22,8 @@ var (
 	procRtlCreateProcessParametersEx = winapi.Ntdll.NewProc("RtlCreateProcessParametersEx")
 	procNtCreateUserProcess          = winapi.Ntdll.NewProc("NtCreateUserProcess")
 	procRtlDestroyProcessParameters  = winapi.Ntdll.NewProc("RtlDestroyProcessParameters")
-	procNtSetInformationProcess      = winapi.Ntdll.NewProc("NtSetInformationProcess")
 
-	procSetProcessPriorityBoost = winapi.Kernel32.NewProc("SetProcessPriorityBoost")
-	procGetExitCodeProcess      = winapi.Kernel32.NewProc("GetExitCodeProcess")
+	procGetExitCodeProcess = winapi.Kernel32.NewProc("GetExitCodeProcess")
 
 	procEnumWindows              = winapi.User32.NewProc("EnumWindows")
 	procGetWindowThreadProcessId = winapi.User32.NewProc("GetWindowThreadProcessId")
@@ -43,11 +38,6 @@ const (
 	processCreateFlagsInheritHandles = 0x04
 	processAllAccess                 = 0x001FFFFF
 	threadAllAccess                  = 0x001FFFFF
-
-	processMemoryPriority = 0x27
-	processIoPriority     = 0x21
-	memoryPriorityHigh    = 5
-	ioPriorityHigh        = 3
 )
 
 // Process is a handle pair produced by Start. Always Close it.
@@ -279,33 +269,6 @@ func (p *Process) Close() {
 		syscall.CloseHandle(p.Thread)
 		p.Thread = 0
 	}
-}
-
-// Boost raises memory/IO priority and disables dynamic priority decay.
-// Returns the first failure it encounters; callers can ignore errors
-// since this is a best-effort tuning step.
-func (p *Process) Boost() error {
-	var errs []error
-	if ret, _, err := procSetProcessPriorityBoost.Call(uintptr(p.Handle), 1); ret == 0 {
-		errs = append(errs, fmt.Errorf("SetProcessPriorityBoost: %w", err))
-	}
-
-	mem := uint32(memoryPriorityHigh)
-	if status, _, _ := procNtSetInformationProcess.Call(
-		uintptr(p.Handle), processMemoryPriority,
-		uintptr(unsafe.Pointer(&mem)), unsafe.Sizeof(mem),
-	); status != 0 {
-		errs = append(errs, fmt.Errorf("NtSetInformationProcess(memory): NTSTATUS 0x%08x", status))
-	}
-
-	iop := uint32(ioPriorityHigh)
-	if status, _, _ := procNtSetInformationProcess.Call(
-		uintptr(p.Handle), processIoPriority,
-		uintptr(unsafe.Pointer(&iop)), unsafe.Sizeof(iop),
-	); status != 0 {
-		errs = append(errs, fmt.Errorf("NtSetInformationProcess(io): NTSTATUS 0x%08x", status))
-	}
-	return errors.Join(errs...)
 }
 
 // Wait polls the process until it exits or until it shows a visible window.

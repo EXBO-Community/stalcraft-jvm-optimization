@@ -1,5 +1,5 @@
 // Package elevate re-launches the current executable under a UAC prompt
-// so install/uninstall actions can run with administrator rights.
+// so install actions can run with administrator rights.
 package elevate
 
 import (

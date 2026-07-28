@@ -57,14 +57,17 @@ jobs:
           GOARCH: amd64
         run: |
           mkdir -p build
-          go build -trimpath -ldflags="-s -w" -o build/cli.exe     ./cmd/cli
-          go build -trimpath -ldflags="-s -w" -o build/service.exe ./cmd/service
+          version="${GITHUB_REF_NAME}"
+          commit="${GITHUB_SHA::7}"
+          ldflags="-s -w -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Version=${version} -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Commit=${commit}"
+          go build -trimpath -ldflags="${ldflags}" -o build/cli.exe     ./cmd/cli
+          go build -trimpath -ldflags="${ldflags}" -o build/service.exe ./cmd/service
 
       - name: Package release zip
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path build/cli.exe, build/service.exe, examples `
+            -Path build/cli.exe, build/service.exe, examples, langs `
             -DestinationPath build/wrapper.zip `
             -Force
 

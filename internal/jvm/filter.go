@@ -98,7 +98,7 @@ func splitArgs(args []string) (jvm []string, mainClass string, app []string) {
 	return
 }
 
-func shouldRemove(arg string) bool {
+func shouldRemove(arg string, injectedIDs map[string]struct{}) bool {
 	if _, ok := exactRemove[arg]; ok {
 		return true
 	}
@@ -107,6 +107,9 @@ func shouldRemove(arg string) bool {
 			return true
 		}
 	}
+	if _, ok := injectedIDs[flagIdentity(arg)]; ok {
+		return true
+	}
 	return false
 }
 
@@ -114,11 +117,34 @@ func shouldRemove(arg string) bool {
 // then splices the generated flags back in, preserving the original
 // main class and app arguments.
 func FilterArgs(orig, injected []string) []string {
+	return filterAndInject(orig, injected, shouldRemove)
+}
+
+// ReplaceArgs replaces only flags with the same identity as an injected flag.
+// It is used for independent properties, such as a tunnel override, when the
+// full tuned JVM profile is unavailable.
+func ReplaceArgs(orig, injected []string) []string {
+	return filterAndInject(
+		orig,
+		injected,
+		func(arg string, injectedIDs map[string]struct{}) bool {
+			_, ok := injectedIDs[flagIdentity(arg)]
+			return ok
+		},
+	)
+}
+
+func filterAndInject(
+	orig,
+	injected []string,
+	remove func(string, map[string]struct{}) bool,
+) []string {
 	jvmArgs, mainClass, app := splitArgs(orig)
+	injectedIDs := flagIdentitySet(injected)
 
 	filtered := make([]string, 0, len(jvmArgs))
 	for _, a := range jvmArgs {
-		if !shouldRemove(a) {
+		if !remove(a, injectedIDs) {
 			filtered = append(filtered, a)
 		}
 	}
@@ -130,4 +156,39 @@ func FilterArgs(orig, injected []string) []string {
 		result = append(result, mainClass)
 	}
 	return append(result, app...)
+}
+
+func flagIdentitySet(flags []string) map[string]struct{} {
+	identities := make(map[string]struct{}, len(flags))
+	for _, flag := range flags {
+		flag = strings.TrimSpace(flag)
+		if flag == "" {
+			continue
+		}
+		identities[flagIdentity(flag)] = struct{}{}
+	}
+	return identities
+}
+
+func flagIdentity(flag string) string {
+	flag = strings.TrimSpace(flag)
+	switch {
+	case strings.HasPrefix(flag, "-Xms"):
+		return "-Xms"
+	case strings.HasPrefix(flag, "-Xmx"):
+		return "-Xmx"
+	case strings.HasPrefix(flag, "-XX:+"):
+		return "-XX:" + strings.TrimPrefix(flag, "-XX:+")
+	case strings.HasPrefix(flag, "-XX:-"):
+		return "-XX:" + strings.TrimPrefix(flag, "-XX:-")
+	case strings.HasPrefix(flag, "-XX:"):
+		if idx := strings.IndexByte(flag, '='); idx >= 0 {
+			return flag[:idx+1]
+		}
+	case strings.HasPrefix(flag, "-D"):
+		if idx := strings.IndexByte(flag, '='); idx >= 0 {
+			return flag[:idx]
+		}
+	}
+	return flag
 }

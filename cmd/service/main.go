@@ -1,10 +1,8 @@
 // Command service is the IFEO Debugger binary. Windows spawns it with
-// "stalzone.exe <args>..." — or the still-current "stalcraft.exe" — when
-// the game launcher tries to start the real executable; service.exe then
-// replaces the JVM flags with a
-// tuned profile, starts the game via NtCreateUserProcess (bypassing
-// its own IFEO hook), boosts priorities and waits until the game
-// window is visible.
+// "stalzone.exe <args>..." when the game launcher tries to start the real
+// executable; service.exe then replaces the JVM flags with a tuned profile,
+// starts the game via NtCreateUserProcess (bypassing
+// its own IFEO hook) and waits until the game window is visible.
 //
 // service.exe has no UI and no installer — those live in cli.exe.
 package main
@@ -20,7 +18,9 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/logging"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/phantom"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/process"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/profile"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/tunnel"
 )
 
 func main() {
@@ -56,25 +56,28 @@ func launch(exePath string, args []string) int {
 		"large_pages", sys.LargePages,
 	)
 
-	if err := config.Ensure(sys); err != nil {
+	if err := profile.Ensure(sys); err != nil {
 		slog.Warn("config ensure failed", "err", err)
 		fmt.Fprintf(os.Stderr, "[config] %v\n", err)
 	}
 
-	cfg, loadedName, cfgErr := config.LoadActive()
+	flags := make([]string, 0)
+	tunedProfileLoaded := false
+	cfg, loadedName, cfgErr := config.LoadActive(profile.LatestDefaultID())
 	switch {
 	case cfgErr != nil:
-		slog.Warn("config load failed, launcher args kept as-is", "err", cfgErr)
+		slog.Warn("config load failed, tuned JVM flags skipped", "err", cfgErr)
 	case cfg.HeapSizeGB == 0:
 		slog.Warn("config has zero heap, skipping flag injection", "name", loadedName)
 	default:
 		if requested := config.ActiveName(); requested != "" && requested != loadedName {
-			slog.Warn("active config missing, fell back to default",
+			slog.Warn("active config missing, fell back to generated default",
 				"requested", requested,
 				"loaded", loadedName,
 			)
 		}
-		flags := jvm.Flags(cfg)
+		flags = jvm.Flags(cfg)
+		tunedProfileLoaded = true
 		slog.Info("config loaded",
 			"name", loadedName,
 			"heap_gb", cfg.HeapSizeGB,
@@ -87,7 +90,37 @@ func launch(exePath string, args []string) int {
 			"large_pages", cfg.UseLargePages,
 			"flags_count", len(flags),
 		)
+	}
+
+	settings, overrideErr := tunnel.LoadOverrides()
+	switch {
+	case overrideErr != nil:
+		slog.Warn("tunnel override load failed", "err", overrideErr)
+	default:
+		overrides, err := settings.JVMFlags()
+		if err != nil {
+			slog.Warn("tunnel override invalid", "err", err)
+			break
+		}
+		flags = append(flags, overrides...)
+		for _, region := range tunnel.Regions() {
+			override, ok := settings.Override(region)
+			if !ok {
+				continue
+			}
+			slog.Info(
+				"tunnel override loaded",
+				"region", region,
+				"pool", override.Pool,
+				"name", override.Name,
+			)
+		}
+	}
+	switch {
+	case tunedProfileLoaded:
 		args = jvm.FilterArgs(args, flags)
+	case len(flags) > 0:
+		args = jvm.ReplaceArgs(args, flags)
 	}
 
 	slog.Info("process starting",
@@ -103,11 +136,6 @@ func launch(exePath string, args []string) int {
 	}
 	defer proc.Close()
 	slog.Info("process started", "pid", proc.PID)
-
-	if err := proc.Boost(); err != nil {
-		slog.Warn("process boost partial", "err", err)
-		fmt.Fprintf(os.Stderr, "[boost] %v\n", err)
-	}
 
 	start := time.Now()
 	code, err := proc.Wait()

@@ -5,20 +5,28 @@
 Проект состоит из двух бинарников, которые должны лежать в одной директории:
 
 - `cli.exe` — пользовательский интерфейс. Интерактивное меню, установка и удаление IFEO перехвата, проверка статуса, управление конфигами.
-- `service.exe` — тихий перехватчик. Регистрируется в IFEO как `Debugger` для `stalzone.exe` / `stalzonew.exe` (а также для прежних `stalcraft.exe` / `stalcraftw.exe`) и запускается Windows автоматически при старте игры. Не имеет UI.
+- `service.exe` — тихий перехватчик. Регистрируется в IFEO как `Debugger` для `stalzone.exe` / `stalzonew.exe` и запускается Windows автоматически при старте игры. Не имеет UI.
 
 При установке `cli.exe` прописывает в реестр путь именно к `service.exe`. Разделение сделано чтобы путь Windows → игра проходил через минимальный бинарник без UI-зависимостей, а всё управление оставалось в отдельном `cli.exe`.
 
 ## Механизм работы
 
 Враппер использует механизм IFEO (Image File Execution Options) для перехвата запуска игры.
-Когда запускается `stalzone.exe` / `stalzonew.exe` (или ещё используемые `stalcraft.exe` / `stalcraftw.exe`), Windows вместо самой игры стартует `service.exe`, передавая ему исходные аргументы лаунчера. Дальнейшее поведение `service.exe`:
+Когда запускается `stalzone.exe` / `stalzonew.exe`, Windows вместо самой игры стартует `service.exe`, передавая ему исходные аргументы лаунчера. Дальнейшее поведение `service.exe`:
 
 1. Загружает активный конфигурационный файл из каталога `configs/` рядом с exe.
-2. Убирает конфликтующие флаги из аргументов оригинального лаунчера и подставляет сгенерированные под железо JVM-флаги.
-3. Создаёт процесс напрямую через `ntdll!NtCreateUserProcess` с атрибутом `PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER`, чтобы избежать повторного перехвата через IFEO.
-4. Поднимает приоритеты памяти и ввода/вывода у созданного процесса через `NtSetInformationProcess`.
+2. Валидирует независимые tunnel override для игровых регионов из `overrides.json` без сетевых запросов.
+3. Убирает конфликтующие флаги из аргументов оригинального лаунчера, подставляет сгенерированные под железо JVM-флаги и по одному сохраненному `-Droxy_address_override.<region>` для каждого настроенного региона.
+4. Создаёт процесс напрямую через `ntdll!NtCreateUserProcess` с атрибутом `PS_ATTRIBUTE_IFEO_SKIP_DEBUGGER`, чтобы избежать повторного перехвата через IFEO.
 5. Завершается после того, как у игрового процесса появится первое видимое окно.
+
+## Переопределение туннеля
+
+Каталоги Roxy запрашиваются по HTTPS только при открытии соответствующего региона в TUI. Основной адрес и зеркала используются последовательно как fallback; к каждому запросу добавляется `login=EXBO-Community`.
+
+Для измерения `cli.exe` отправляет на `tunnel_port + 1` случайный 16-байтовый UUID. Ответ должен иметь формат `UUID[16] | tunnelToBackendRtt:i32 (big-endian) | limitReached:u8` и прийти за одну секунду. RTT клиента измеряется локально. Все endpoint выбранной группы, а в режиме поиска все endpoint вне исключенных групп, проверяются параллельно и появляются в интерфейсе по мере ответов. Автоматических повторных раундов нет; следующий probe запускается только при повторном открытии или явном выборе `Измерить снова`.
+
+Настройки находятся в `overrides.json`, отдельно от версионных JVM-профилей. Override для RU, EU, NA, SEA и NEA сохраняются независимо и могут действовать одновременно; `Выбор игры` очищает только текущий регион. Кэш `cache/tunnel_stats.json` хранит до 20 измерений на endpoint, состояние последнего connection limit и время его проверки; записи старше 24 часов удаляются. Узлы, которые в прошлый раз сообщили лимит, проверяются первыми и остаются недоступными для нового выбора до ответа `limitReached=false`.
 
 ## Логирование
 
@@ -31,19 +39,28 @@
 Установка перехвата IFEO
 
 ```bash
-cli.exe --install     # установить перехват IFEO
+cli.exe install       # установить перехват IFEO
 ```
 
 Проверка статуса перехвата
 
 ```bash
-cli.exe --status      # проверить статус перехвата
+cli.exe status        # проверить статус перехвата
 ```
 
 Удаление перехвата IFEO
 
 ```bash
-cli.exe --uninstall   # удалить перехват IFEO
+cli.exe uninstall     # удалить перехват IFEO
+```
+
+Управление конфигами
+
+```bash
+cli.exe config list
+cli.exe config releases
+cli.exe config regenerate v1.1.2
+cli.exe config select v1.1.2/default
 ```
 
 Запуск `cli.exe` без аргументов открывает интерактивное меню с теми же действиями и управлением конфигами.
@@ -55,8 +72,11 @@ cli.exe --uninstall   # удалить перехват IFEO
 
 ```bash
 mkdir -p build
-go build -trimpath -ldflags="-s -w" -o build/cli.exe     ./cmd/cli
-go build -trimpath -ldflags="-s -w" -o build/service.exe ./cmd/service
+version="$(git describe --tags --always --dirty)"
+commit="$(git rev-parse --short HEAD)"
+ldflags="-s -w -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Version=${version} -X github.com/EXBO-Community/stalcraft-jvm-optimization/internal/buildinfo.Commit=${commit}"
+go build -trimpath -ldflags="${ldflags}" -o build/cli.exe     ./cmd/cli
+go build -trimpath -ldflags="${ldflags}" -o build/service.exe ./cmd/service
 ```
 
 Оба бинарника затем кладутся в одну директорию — установку делает только `cli.exe`, но он ищет `service.exe` рядом с собой.

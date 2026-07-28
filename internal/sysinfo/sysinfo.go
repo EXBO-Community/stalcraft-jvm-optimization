@@ -15,7 +15,7 @@ type Info struct {
 	TotalRAM uint64
 	FreeRAM  uint64
 	// CPUCores is the number of physical cores reported by Windows.
-	// Used for hardware-class decisions (e.g. X3D big-cache bonus).
+	// Used only for reporting; GC sizing uses CPUThreads instead.
 	CPUCores int
 	// CPUThreads is the total number of logical threads the OS exposes
 	// (runtime.NumCPU). Differs from CPUCores×2 on CPUs without SMT/HT
@@ -41,8 +41,8 @@ func (i Info) TotalGB() uint64     { return i.TotalRAM >> 30 }
 func (i Info) FreeGB() uint64      { return i.FreeRAM >> 30 }
 
 // HasBigCache reports whether the CPU has an X3D-class L3 cache (>=64 MB
-// per CCD). The threshold is chosen so non-3D dual-CCD parts do not
-// trigger big-cache tuning (their effective per-CCD cache is 32 MB).
+// per CCD). The current generator no longer branches on this, but the value
+// is kept in logs and status output for troubleshooting.
 func (i Info) HasBigCache() bool { return i.L3CacheMB >= 64 }
 
 // MemTier classifies ConfiguredMemoryClockSpeed into two bandwidth

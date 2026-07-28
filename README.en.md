@@ -23,7 +23,7 @@ This program allows you to change JVM startup parameters to increase game perfor
 
 > [!IMPORTANT]
 > The utility tunes JVM parameters for any amount of RAM starting from 8 GB.
-> On systems with less RAM the generated `default.json` uses a minimally safe heap,
+> On systems with less RAM the generated profile uses a minimally safe heap,
 > but stable gameplay is not guaranteed — prefer upgrading your RAM or sticking with
 > the stock EXBO launcher settings.
 
@@ -39,7 +39,7 @@ The utility ships as two binaries that must live in the same directory:
 - **`cli.exe`** — the interactive menu for installing, removing and managing configurations. The user only launches this when they need to change something.
 - **`service.exe`** — the silent interceptor that Windows spawns automatically when the game starts. It has no UI, and you never run it by hand.
 
-`service.exe` intercepts the startup of the game process `stalzone.exe` (launcher) or `stalzonew.exe` (Steam) — plus the legacy `stalcraft.exe` / `stalcraftw.exe` until the game finishes renaming its process — to:
+`service.exe` intercepts the startup of the game process `stalzone.exe` (launcher/EGS/VK Play) or `stalzonew.exe` (Steam) to:
 
 - **Select optimal JVM configuration:** allocated resources volume, Garbage Collector (GC) mode, and JIT compilation mode.
 - **Increase game process priority:** the process runs with higher priority compared to other processes.
@@ -54,7 +54,7 @@ The utility is installed **once** and automatically runs each time the game is l
 
 - **Operating System:** Windows 10/11
 - **Game Version:** Steam/Launcher/EGS/VK Play
-- **OS Rights:** administrator privileges in Windows (only required during install/uninstall)
+- **OS Rights:** administrator privileges in Windows (only required during install)
 - **CPU:** 4 or more cores
 - **RAM:** 8+ GB, 12+ GB recommended (below 12 GB some optimizations such as `PreTouch` stay disabled)
 
@@ -72,7 +72,7 @@ The utility is installed **once** and automatically runs each time the game is l
     - Example for Launcher: `C:\Users\User\AppData\Roaming\EXBO`
     - Example for EGS: `C:\Games\EGS Stalcraft\STALCRAFT`
 2. Create the `jvm_wrapper` directory at the root of the launcher folder (see the tip above).
-3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and an `examples/` directory inside.
+3. Download the [latest release](../../releases/latest) and extract `wrapper.zip` into `jvm_wrapper` — you should end up with `cli.exe`, `service.exe` and the `examples/`, `langs/` directories inside.
 4. Run `cli.exe`, select `Install` in the menu using the arrow keys and press **Enter**.
 5. A UAC prompt will appear — accept it. This is expected: the IFEO hook is written to `HKLM` which requires administrator privileges.
 
@@ -94,8 +94,8 @@ The utility is installed **once** and automatically runs each time the game is l
 
 ### Configuration
 
-After installation, the utility will automatically create a `default.json` configuration profile,
-which will be located in the `jvm_wrapper/configs/default.json` folder.
+After installation, the utility will automatically create a `v1.1.2/default.json` configuration profile,
+which will be located at `jvm_wrapper/configs/v1.1.2/default.json`.
 The game will launch with this profile by default.
 This profile will be adapted to your computer's parameters, but its existence does not preclude custom configuration.
 
@@ -104,25 +104,47 @@ This profile will be adapted to your computer's parameters, but its existence do
 You can change the launch configuration yourself. To do this:
 
 1. Run `cli.exe`, select `Select Config` in the menu using the arrow keys and press **Enter**.
-2. Select the desired configuration file and press **Enter**.
+2. Select the desired configuration file and press **Enter**. You can enter version folders and use `< Back` to move one level up.
 3. Restart the game if it is running.
 
 > [!NOTE]
-> By default only the `default.json` configuration is available, but it is *not* the only option.
+> By default the active configuration is `v1.1.2/default.json`, but it is *not* the only option.
 > See the [Example configurations](#example-configurations) and [Custom configuration](#custom-configuration)
 > sections below for instructions.
 
+The same operations are available as CLI commands:
+
+- `cli.exe status`
+- `cli.exe install`
+- `cli.exe uninstall`
+- `cli.exe config list`
+- `cli.exe config releases`
+- `cli.exe config regenerate v1.1.2`
+- `cli.exe config select v1.1.2/default`
+
+#### Tunnel Override (Experimental)
+
+The `Tunnel override` menu lets you independently select a specific Roxy node for RU, EU, NA, SEA, and NEA at the same time. `Game default` lives inside each region and clears only that region's override. A regional list is requested only after that region is opened. Opening a group measures all of its nodes concurrently and shows the PC-to-tunnel RTT, tunnel-to-backend RTT, and their sum separately. There are no background repeat rounds; another measurement starts only after reopening the view or selecting `Measure again`.
+
+`Search best server` measures every node outside the persistent exclusion list and shows the best five. Results can be ranked by total ping, client RTT, server RTT, stability, or the weight reported by the game backend. A node that reports a connection limit remains visible, but cannot be selected until a fresh successful measurement clears the limit.
+
+Selections and search settings live in `jvm_wrapper/overrides.json`; up to 20 recent measurements per node live in `jvm_wrapper/cache/tunnel_stats.json` and expire after 24 hours. `Regenerate Config` does not touch either file. At game startup, `service.exe` only validates the stored addresses and adds one JVM property per configured region; it performs no network measurements on the launch path.
+
 #### Example configurations
 
-The repository currently ships one example — `examples/8khz.json`, targeted at high-end systems (8+ cores, 32 GB RAM) running 8 kHz mice. It prioritizes minimal STW pauses and predictable frame time at the cost of a small amount of throughput.
+The repository ships one example: `examples/aikar.json`.
+It is inspired by popular Minecraft/Paper/Aikar G1GC tuning ideas, adapted for STALZONE and OpenJDK 9.
+It is not an exact copy of server-side Aikar flags and not a universal recommendation.
 
-To use an example, browse the [`/examples`](./examples/) directory in this repository, download the `.json` you want and drop it into `jvm_wrapper/configs/`.
+`aikar.json` uses [PaperMC Aikar flags](https://docs.papermc.io/paper/aikars-flags/) and Prism Launcher's warning that [more allocated RAM does not always mean better performance](https://prismlauncher.org/wiki/help-pages/java-settings/) as reference points.
 
-Then run the utility, pick `Select Config` in the menu. A new profile should appear alongside `default.json` — select it, then restart the game.
+To use the example, browse the [`/examples`](./examples/) directory in this repository, download `aikar.json` and drop it into `jvm_wrapper/configs/`.
+
+Then run the utility and pick `Select Config` in the menu. A new profile should appear in the list — select it, then restart the game.
 
 #### Custom Configuration
 
-To create your own configuration profile, simply copy the `default.json` file,
+To create your own configuration profile, simply copy the `configs/v1.1.2/default.json` file,
 rename it to something like `my_setup.json`, then edit it with any available
 text editor.
 
@@ -135,9 +157,9 @@ Creating your own configuration should be accompanied by studying the [documenta
 on configuration parameters.
 
 > [!TIP]
-> If you've customized the configuration in `default.json` and want to revert
-> to the recommended settings — select `Regenerate Config` in the menu.
-> This action will write the optimal settings for your PC to `default.json`.
+> If you've customized a configuration and want to revert
+> to the recommended settings — select `Regenerate Config` in the menu and choose the desired version.
+> This action will rewrite `configs/<version>/default.json` and make it active.
 
 ---
 

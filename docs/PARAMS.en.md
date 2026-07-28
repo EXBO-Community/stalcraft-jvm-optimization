@@ -1,8 +1,8 @@
 # Configuration Parameters
 
-Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `default.json` covers about 95% of cases: the wrapper inspects your CPU, core count, RAM, and L3 cache size and plugs in values that have been proven to work well on live STALZONE.
+Configuration is fine-grained JVM tuning for your specific hardware. The auto-generated `v1.1.2/default.json` profile covers about 95% of cases: the wrapper inspects your CPU, logical thread count, RAM, memory speed and Large Pages availability, then plugs in values that have been proven to work well on live STALZONE.
 
-This document explains **why** each parameter exists and **which direction** to nudge it when hand-tuning. The exact numbers for your machine are sitting in `configs/default.json` after first launch — the defaults are already tailored to your hardware.
+This document explains **why** each parameter exists and **which direction** to nudge it when hand-tuning. The exact numbers for your machine are sitting in `configs/v1.1.2/default.json` after first launch — the defaults are already tailored to your hardware.
 
 > **Warning:** a misconfigured parameter often produces results **worse** than "leave it alone". Without a clearly stated problem, keep the auto-generated config. Every manual change should be deliberate.
 
@@ -21,13 +21,13 @@ This document explains **why** each parameter exists and **which direction** to 
 
 Fixes the JVM heap size (`-Xmx`) in gigabytes. The heap is where all Java objects live: chunks, entities, texture buffers, world data structures. A bigger heap means rarer GC cycles but longer individual pauses (G1 has to walk more regions). STALZONE's live working set rarely exceeds 4 GB, so growing the heap endlessly is counterproductive.
 
-The wrapper picks between 2 GB (on 8 GB total RAM) and 8 GB (on 24+ GB total RAM). **Manual tuning is almost never needed.** If you are on 16 GB and STALZONE actually reports `OutOfMemoryError` (rare, only with aggressive mod stacks) you can try 6 or 7. Don't go above 8 — that only bloats mixed GC pauses and breaks frame time smoothness.
+The wrapper picks between 2 GB on the weakest systems and 6 GB on systems with 16+ GB RAM: 3 GB for 6+ GB RAM, 4 GB for 8+ GB, 5 GB for 12+ GB and 6 GB for 16+ GB. **Manual tuning is almost never needed.** STALZONE usually lives inside a 2-3 GB live set, so heaps above 6 GB tend to increase G1 scan cost more than they help performance.
 
 ### `pre_touch`
 
 Forces the JVM to physically commit every heap page at process start instead of lazily allocating them. Without this flag Windows only hands out pages when the game first touches them, and that first touch during gameplay causes a page fault — a 1–5 ms microfreeze.
 
-**Enable (`true`)** only when you have **12+ GB RAM**. On weaker systems PreTouch eats too much RAM at launch and does more harm than good (Windows starts paging). The downside is a 1–3 second longer startup because all 4-8 GB get touched up front.
+The generator enables `pre_touch` at **12+ GB RAM**. On weaker systems PreTouch eats too much RAM at launch and does more harm than good (Windows starts paging). The downside is a slightly longer startup because all 4-6 GB of heap get touched up front.
 
 ### `metaspace_mb`
 
@@ -43,67 +43,67 @@ Size of the area holding class metadata. STALZONE loads about 11,000 classes (en
 
 Target cap on GC pause length. G1 dynamically resizes young gen and picks how many regions to include in mixed GC so pauses stay below this target.
 
-**Lower = smoother frame time, but more GC.** On mainstream hardware 35 ms is a good balance: one missed frame at 60 FPS (16.7 ms frame time — two frames in a row), almost imperceptible to the player. On strong CPUs (X3D-class parts with 96 MB L3) you can push it down to 20-25 ms and get effectively smooth gameplay. On weaker CPUs don't go below 30 ms — G1 simply can't hit the target and will miss it anyway, but overall throughput will suffer.
+**Lower does not always mean smoother.** The current generator uses 100 ms for normal/unknown memory speed and 150 ms for slow DDR4/DDR3 at 2933 MT/s or below. This looks less aggressive than older 25-35 ms profiles, but in practice it reduces the risk of G1 slicing work into too many pauses that still miss the target. If you manually set 30-50 ms, judge it by frame-time captures and GC logs, not by "smaller number must be better".
 
 ### `g1_heap_region_size_mb`
 
 Size of a single G1 region. The heap is partitioned into equal regions, and all of G1's machinery operates on them. Legal values are powers of two from 1 to 32 MB. Smaller regions give G1 finer control over mixed GC (it can pick which ones to collect more precisely), larger regions save on RSet scanning.
 
-**The wrapper sizes this based on heap** (4 MB for 2-3 GB heap, 8 MB for 4-5 GB, 16 MB for 6-7 GB, 32 MB for 8 GB). Touch it only if you want more granular mixed GC for a low-latency setup (8 kHz mouse, e-sport tuning) — then step down one size.
+**The wrapper sizes this based on heap:** 4 MB for 2-3 GB heap and 8 MB for 4-6 GB heap. Older profiles with 16-32 MB regions were removed: at the current heap sizes, 8 MB gives G1 finer mixed-GC region selection, and STALZONE keeps large mesh/buffer data mostly off-heap.
 
 ### `g1_new_size_percent` and `g1_max_new_size_percent`
 
 Minimum and maximum percentage of heap that can be used for young generation (Eden + Survivor). Young gen is where all new objects are born; most die young and a small fraction gets promoted to old gen.
 
-Bigger young gen = fewer young GCs but each one longer. **Set 30 / 50** — the wrapper does. These values are optimal for STALZONE's high allocation rate. Going below 20 / 40 gives you frequent minor pauses; going above 40 / 60 eats the heap budget old gen needs.
+Bigger young gen = fewer young GCs but each one longer. The wrapper uses **30% / 50%** on slow memory and **33% / 50%** on normal/unknown memory. Going below 20% / 40% gives you frequent minor pauses; going above 40% / 60% eats the heap budget old gen needs.
 
 ### `g1_reserve_percent`
 
 Fraction of heap G1 holds in reserve for peak allocation spikes between GC cycles. If this reserve runs out you get an emergency full GC, which freezes the game for hundreds of milliseconds.
 
-**Set 20%.** Less and you risk full GCs on allocation peaks (particle effects, chunk loading bursts). More and heap usage becomes inefficient. STALZONE with its spiky allocation pattern loves headroom.
+The generator uses **15%**. This leaves G1 headroom for allocation spikes without taking too much heap away from old gen. If you experiment with a more aggressive young gen, 20% can be tried, but without evacuation/full-GC evidence it is usually unnecessary.
 
 ### `g1_heap_waste_percent`
 
 G1's tolerance for "dead" space in old regions. Once more than X% of those regions is garbage, G1 starts mixed GC more aggressively. Lower values = more aggressive G1.
 
-**5% is a good default.** Aggressive cleanup prevents garbage buildup without being so aggressive that mixed GC becomes constant. You can try 10% if mixed GC pauses bother you, but at the cost of slightly more wasted heap space.
+The generator uses **10%**. This is lazier than the older 5% profile and reduces the risk of constant mixed GC on systems where pauses are already memory-bandwidth bound.
 
 ### `g1_mixed_gc_count_target`
 
 How many sequential mixed GC cycles G1 spreads old-gen cleanup over. More cycles = shorter each pause, but more pauses overall.
 
-**4 is the throughput default, 8 is the low-latency choice.** For STALZONE leaning on frame time smoothness, 8 is excellent on strong CPUs. On weaker CPUs 4 gives more consistent throughput.
+The wrapper uses **4** on slow memory and **6** on normal/unknown memory. More cycles = less work in each mixed GC, but also more pauses and more background CPU pressure.
 
 ### `initiating_heap_occupancy_percent`
 
 Heap occupancy at which G1 kicks off a concurrent marking cycle — background scan of old gen to prepare mixed GC. Too high a threshold = concurrent marking can't finish in time, triggering a full GC. Too low = constant background CPU usage.
 
-**20% is a safe default, 15% is for strong systems.** On X3D-class parts with big L3 and fast memory you can afford an earlier start — concurrent marking finishes faster and mixed GC kicks in before heap fills up. On weak hardware 20-25% gives concurrent marking more actual time to do its job.
+The generator uses **25%**. This starts concurrent marking before combat bursts and chunk loading can overflow old gen, but without excessive background activity.
 
 ### `g1_mixed_gc_live_threshold_percent`
 
 G1 only includes an old region in mixed GC if it has less than X% live objects (the rest is garbage — something worth cleaning). The idea is not to bother with almost-full regions where cleanup yields little.
 
-**90 is correct.** Low values (65-85) from older guides leave too much garbage in the heap. 90 gives G1 freedom to clean even dense regions when there's still something to reclaim — this prevents long-lived object buildup.
+The generator uses **85%**. This keeps G1 from spending too much time on almost fully-live old regions while still preventing garbage from accumulating unchecked.
 
 ### `g1_rset_updating_pause_time_percent`
 
 How much of the GC pause G1 is allowed to spend updating Remembered Sets (the structure tracking cross-region references). Lower = shorter pauses, but part of the work moves to concurrent phase (background CPU load).
 
-**0% — all concurrent.** On 6+ core CPUs the concurrent refinement threads handle it on their own, no need to do it in STW. On 4-core parts you can set 3-5% to offload background work.
+The wrapper uses **5%** on slow memory and **8%** on normal/unknown memory. A zero value moves all work into the concurrent phase, but under real gameplay this can create too much background pressure and longer catch-up pauses.
 
 ### `survivor_ratio`
 
-Ratio of Eden to each Survivor area inside young gen. At `32` you get Eden = 32 × Survivor, meaning Survivor is tiny. The effect is that objects get promoted to old gen faster (they don't linger in Survivor).
+Ratio of Eden to each Survivor area inside young gen. Higher values make Survivor smaller and promote surviving objects to old gen faster. Lower values let more objects die in young gen without early promotion.
 
-**32 is our "fast promotion" philosophy.** Classic guides recommend 6-8 (big Survivor = objects live longer in young), but for STALZONE with its short-lived temporary objects fast promotion wins: less copying between Survivor spaces, less bookkeeping.
+The generator uses **12**. This gives more Survivor space than the old `32` profile, so short-lived burst objects get a chance to die in young gen instead of being pushed into old gen during combat.
 
 ### `max_tenuring_threshold`
 
 Maximum number of young GC cycles an object has to survive before being moved to old gen. With `1`, any object surviving its first young GC immediately goes to old.
 
-**1 pairs with `survivor_ratio: 32`.** Together they implement "object either dies very young or goes straight to old gen". Ideal for STALZONE: most temporary objects (particle vectors, bounding boxes, transient collections) die in Eden, and the ones that survive a cycle are almost certainly long-lived (entities, chunks) — no point keeping them in young.
+The generator uses **3**. This pairs with `survivor_ratio: 12`: objects are not promoted to old gen after the first young GC, but they also do not stay in Survivor for too long.
 
 ---
 
@@ -145,7 +145,7 @@ Lets G1 adjust the number of active GC workers based on load. Useful on modern C
 
 G1 finds identical `String` objects in the background and consolidates their internal char arrays into one shared copy. STALZONE creates tons of duplicate strings (tag names, translation keys, item IDs); dedup saves 100-200 MB of heap over a long session.
 
-**Enable (`true`)** on 8+ core CPUs. On weak CPUs the ~1% CPU overhead from the dedup thread may be noticeable, but on strong parts this is pure heap savings.
+The auto-generated profile keeps this disabled (`false`). Deduplication can save heap in a long session, but it adds background work and does not always pay off in a client game. Enable it only as an experiment on CPUs with plenty of spare threads and verify frame time.
 
 ---
 
@@ -155,13 +155,13 @@ G1 finds identical `String` objects in the background and consolidates their int
 
 Worker count for STW phases (young GC, mixed GC copy phase). These threads only run during pauses, so the count directly affects pause length: more threads = more parallel work = shorter pause.
 
-**Rule: `physical cores - 2`, capped at 10 and floored at 2.** Leave 2 cores for the main game thread and render thread. The cap of 10 is where G1 hits diminishing returns on consumer CPUs. The wrapper computes this automatically.
+**Rule: `logical threads - 2`, capped at 10 and floored at 2.** This matters on CPUs without SMT/HT: a 6-core i5-9600KF exposes 6 threads, not 12. The cap of 10 is where G1 usually hits diminishing returns on consumer CPUs.
 
 ### `conc_gc_threads`
 
 Worker count for concurrent phases: concurrent marking, concurrent refinement, SATB processing. These threads run alongside the game, stealing CPU cycles.
 
-**Usually `parallel / 4`, minimum 1, maximum 4.** More concurrent workers = faster concurrent phase = lower full GC risk, but they steal cores from the game. On X3D-class parts the wrapper adds +1 to the default — strong cores can afford concurrent work without hurting FPS.
+**Usually `parallel / 2`, minimum 1, maximum 5.** More concurrent workers = faster concurrent phase = lower full GC risk, but they run at the same time as the game. There is no separate X3D branch anymore: testing showed the memory-tier profile to be steadier than special V-Cache numbers.
 
 ### `soft_ref_lru_policy_ms_per_mb`
 
@@ -185,25 +185,25 @@ Maximum size of the compiled JIT code cache. When the cache fills up, JIT stops 
 
 Nested inlining depth — how many call levels C2 will unfold into the caller. Deeper inlining = faster hot path, but bigger compiled code.
 
-**15 on mainstream CPUs, 20 on X3D-class parts with large L3.** With 96 MB of L3 cache you can afford aggressive inlining — the hot path fits entirely in cache. On regular CPUs with 16-32 MB L3, deep inlining evicts hot data from cache: you win in one place, lose in another.
+**15.** The old X3D profile with deeper inlining was removed: live testing showed the regular values to be smoother than the aggressive V-Cache branch.
 
 ### `freq_inline_size`
 
 Size threshold for a "hot" method that JIT is allowed to inline despite its size. Normal methods have a stricter size limit for inlining, but frequently-called ones get this larger quota.
 
-**500 on mainstream, 750 on big-cache.** Pairs with `max_inline_level` — together they determine how much code ends up inlined into the hot path.
+**500.** Pairs with `max_inline_level` — together they determine how much code ends up inlined into the hot path.
 
 ### `inline_small_code`
 
 Size threshold for a compiled method to be considered "small" and inlined aggressively. Larger value = more methods fall under aggressive inlining.
 
-**4000 for normal, 6000 for big-cache.** Same pattern — more CPU cache = more compiled code can live inline.
+**4000.** Higher values increase compiled code footprint and are not the default.
 
 ### `max_node_limit` and `node_limit_fudge_factor`
 
 `max_node_limit` caps the number of nodes in C2's IR graph for a single method. Complex methods (render loop, chunk mesher) can hit this limit and stay uncompiled — meaning interpretation, i.e. ~10-100x slower. `node_limit_fudge_factor` is the allowance above the limit that C2 may take during optimization.
 
-**240000 / 8000 for normal CPUs, 320000 / 8000 for big-cache.** These values let C2 compile even STALZONE's heaviest methods. Smaller values (the JVM default is 80000) leave several important methods running in the interpreter.
+**240000 / 8000.** These values let C2 compile heavy STALZONE methods. Smaller values (the JVM default is 80000) can leave important methods running in the interpreter, while higher values risk bloating compiled code without practical gain.
 
 ### `nmethod_sweep_activity`
 
@@ -283,7 +283,7 @@ Multiplier on the C1→C2 promotion threshold. 1.0 is the default (~10,000 invoc
 
 ### `use_large_pages`
 
-Enables 2 MB (or 1 GB) memory pages instead of the standard 4 KB. Large pages reduce TLB pressure — the CPU spends fewer cycles on page table walks. For an allocation-heavy workload like STALZONE the win is 2-5% throughput plus reduced TLB jitter (critical for latency-sensitive setups like 8 kHz mice).
+Enables 2 MB (or 1 GB) memory pages instead of the standard 4 KB. Large pages reduce TLB pressure — the CPU spends fewer cycles on page table walks. For an allocation-heavy workload like STALZONE this can make heap access steadier, but the gain depends on the specific system.
 
 **Requires Windows setup.** Without `SeLockMemoryPrivilege` the JVM silently ignores the flag:
 
