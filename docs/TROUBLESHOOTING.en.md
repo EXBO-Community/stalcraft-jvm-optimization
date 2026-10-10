@@ -9,6 +9,31 @@ If your issue isn't listed here, open a GitHub issue and attach the files from `
 
 ---
 
+## Uninstall and recovery after an update
+
+Close the game, then use **the latest** `cli.exe` → `Uninstall`, or run `.\cli.exe uninstall` in PowerShell. Accept the UAC prompt if requested. Removal also works for older installations: it does not need the old folder, `service.exe`, or the registry permissions added by a recent installer.
+
+If `cli.exe` is unavailable, extract `uninstall.ps1` from the latest `wrapper.zip` into any folder. Open PowerShell in that folder and run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+The script works on its own and requests UAC only if access is denied and it is not already elevated. `ExecutionPolicy Bypass` applies only to this invocation; it does not change the machine's policy. There is no `-Force` option.
+
+Both removal paths use the native Windows registry view and touch only the `Debugger` value in these four exact keys, including the historical game names:
+
+```text
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\stalzone.exe
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\stalzonew.exe
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\stalcraft.exe
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\stalcraftw.exe
+```
+
+They recognize the path-only `service.exe` hook and the historical `wrapper.exe` hook without checking whether the executable still exists. Other debuggers are refused with an error. Other values, subkeys, permissions, executable names and files are not removed; an empty IFEO key is harmless.
+
+The script returns exit code **0** when all hooks are removed or already absent, and **1** on failure or a cancelled UAC prompt. Read the target-specific errors before deleting the wrapper folder. If an elevated attempt is still denied, report that error rather than taking ownership of registry keys or granting broad permissions. Once removal succeeds, launch the game normally; no reinstall is needed.
+
 ## Anti-cheat errors
 
 Errors shown by the game's anti-cheat at launch are usually a re-wrapping of ordinary system errors that happened while `service.exe` was starting. To resolve such an error, you don't fix the anti-cheat — you fix whatever is preventing it from launching the wrapper.
@@ -24,10 +49,8 @@ Errors shown by the game's anti-cheat at launch are usually a re-wrapping of ord
 
 **How to fix.**
 
-1. Download the [latest release](../../releases/latest) of `wrapper.zip` and extract it back into the folder where the wrapper used to live. After extraction `service.exe` should be sitting next to `cli.exe` again.
-2. Then proceed based on your situation:
-   - **If an antivirus deleted the file** — add the game folder to your antivirus exclusions (see [README → Installation](../README.en.md#installation)) and run `cli.exe` → `Install` again.
-   - **If you removed the folder by hand** — run `cli.exe` → `Uninstall` first. Only then delete the `jvm_wrapper` folder. That's the correct way to remove the utility: it detaches the interception hook from the game, so Windows no longer tries to launch the deleted `service.exe`.
+1. **To keep using the wrapper** — download the [latest release](../../releases/latest) of `wrapper.zip` and extract it into the old folder so that `service.exe` is next to `cli.exe` again. If an antivirus removed the file, follow [README → Installation](../README.en.md#installation), then run `cli.exe` → `Install` again.
+2. **To remove the wrapper** — extract the latest release into any folder and follow [Uninstall and recovery after an update](#uninstall-and-recovery-after-an-update). You do not need to restore `service.exe`, return to the original path, or install again before uninstalling.
 
 ### `OS error 740` — The requested operation requires elevation
 
@@ -35,7 +58,7 @@ Errors shown by the game's anti-cheat at launch are usually a re-wrapping of ord
 
 **What happened.** Someone — usually the user themselves, out of habit of "run everything as admin" — ticked the **"Run this program as an administrator"** checkbox in `service.exe`'s file properties. After that Windows asks for UAC elevation on every launch. But when the game launcher tries to start the game, there is nobody to show the UAC prompt to: the launcher runs as a regular user and cannot grant elevation to a child process. Windows returns error 740, the anti-cheat picks it up and surfaces it to the player.
 
-> `service.exe` **must not** run as administrator. Only `cli.exe` needs admin rights during install, and it requests them through a UAC prompt automatically when needed.
+> `service.exe` **must not** run as administrator. `cli.exe` requests administrator rights through UAC for installation and hook removal; the game interceptor does not need them.
 
 **How to fix.**
 
@@ -51,6 +74,8 @@ Errors shown by the game's anti-cheat at launch are usually a re-wrapping of ord
 ## Optimization is not applied
 
 This section covers the situation where the install completes without any errors, the game launches, but nothing feels different: FPS is unchanged, pauses are the same, memory usage looks identical to before.
+
+With **No JVM optimization** selected, unchanged memory usage and JVM flags are expected, not an installation failure. Tunnel overrides remain active. Select a profile before diagnosing JVM optimization.
 
 ### Install succeeded, but the game starts as if nothing changed
 

@@ -46,19 +46,20 @@ func main() {
 // returns the exit code to propagate to the OS. Nothing sensitive is
 // logged — only counts, sizes and redacted paths.
 func launch(exePath string, args []string) int {
-	sys := sysinfo.Detect()
-	slog.Info("system detected",
-		"cores", sys.CPUCores,
-		"ram_gb", sys.TotalGB(),
-		"free_ram_gb", sys.FreeGB(),
-		"l3_mb", sys.L3CacheMB,
-		"big_cache", sys.HasBigCache(),
-		"large_pages", sys.LargePages,
-	)
-
-	if err := profile.Ensure(sys); err != nil {
-		slog.Warn("config ensure failed", "err", err)
-		fmt.Fprintf(os.Stderr, "[config] %v\n", err)
+	if config.ActiveName() != config.NoProfile {
+		sys := sysinfo.Detect()
+		slog.Info("system detected",
+			"cores", sys.CPUCores,
+			"ram_gb", sys.TotalGB(),
+			"free_ram_gb", sys.FreeGB(),
+			"l3_mb", sys.L3CacheMB,
+			"big_cache", sys.HasBigCache(),
+			"large_pages", sys.LargePages,
+		)
+		if err := profile.Ensure(sys); err != nil {
+			slog.Warn("config ensure failed", "err", err)
+			fmt.Fprintf(os.Stderr, "[config] %v\n", err)
+		}
 	}
 
 	flags := make([]string, 0)
@@ -67,6 +68,8 @@ func launch(exePath string, args []string) int {
 	switch {
 	case cfgErr != nil:
 		slog.Warn("config load failed, tuned JVM flags skipped", "err", cfgErr)
+	case loadedName == config.NoProfile:
+		slog.Info("JVM optimization disabled, preserving launcher arguments")
 	case cfg.HeapSizeGB == 0:
 		slog.Warn("config has zero heap, skipping flag injection", "name", loadedName)
 	default:

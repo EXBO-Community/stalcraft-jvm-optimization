@@ -18,6 +18,9 @@ import (
 
 const registryPath = `Software\StalcraftWrapper`
 
+// NoProfile preserves launcher JVM arguments. Its value cannot be a Windows filename.
+const NoProfile = "<none>"
+
 var (
 	// ErrNotFound is returned when a config file does not exist on disk.
 	ErrNotFound = errors.New("config not found")
@@ -159,13 +162,16 @@ func Exists(name string) bool {
 	return err == nil
 }
 
-// LoadActive reads the currently selected config. If the active config is
-// unset or missing, fallback is loaded instead.
+// LoadActive reads the selected config, or returns an empty config for NoProfile.
+// If the selection is unset or missing, fallback is loaded instead.
 func LoadActive(fallback string) (cfg Config, loadedName string, err error) {
 	if fallback == "" {
 		fallback = "default"
 	}
 	requested := ActiveName()
+	if requested == NoProfile {
+		return Config{}, NoProfile, nil
+	}
 	if requested == "" {
 		requested = fallback
 	}
@@ -256,9 +262,13 @@ func ListDir(prefix string) ([]Entry, error) {
 
 // SetActive records the active config name in HKCU.
 func SetActive(name string) error {
-	clean, err := cleanName(name)
-	if err != nil {
-		return err
+	clean := name
+	if name != NoProfile {
+		var err error
+		clean, err = cleanName(name)
+		if err != nil {
+			return err
+		}
 	}
 	key, _, err := registry.CreateKey(registry.CURRENT_USER, registryPath, registry.SET_VALUE)
 	if err != nil {
@@ -281,6 +291,9 @@ func ActiveName() string {
 	val, _, err := key.GetStringValue("ActiveConfig")
 	if err != nil {
 		return ""
+	}
+	if val == NoProfile {
+		return NoProfile
 	}
 	clean, err := cleanName(val)
 	if err != nil {

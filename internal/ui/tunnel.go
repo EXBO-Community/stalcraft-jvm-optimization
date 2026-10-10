@@ -15,15 +15,20 @@ import (
 )
 
 const (
-	tunnelRoundTimeout      = time.Second
-	tunnelPriorityHeadStart = 35 * time.Millisecond
-	maxTunnelSearchResults  = 5
+	tunnelSearchProbeCount    = 10
+	tunnelProbeConcurrency    = 8
+	tunnelProbeInterval       = 100 * time.Millisecond
+	tunnelMinimumReplies      = 5
+	tunnelPriorityHeadStart   = 35 * time.Millisecond
+	tunnelResultCandidateRows = 5
+	tunnelResultActionRows    = 4
 )
 
 type tunnelMenuState struct {
 	settings    tunnel.Settings
 	settingsErr error
 	cache       tunnel.Cache
+	roundCache  tunnel.Cache
 	catalogs    map[tunnel.Region]tunnel.Catalog
 
 	region           tunnel.Region
@@ -58,12 +63,18 @@ type tunnelCatalogMsg struct {
 	err     error
 }
 
-type tunnelProbeMsg struct {
-	session    uint64
-	target     tunnel.Target
+type tunnelProbeSample struct {
 	result     tunnel.ProbeResult
 	err        error
 	measuredAt time.Time
+}
+
+type tunnelProbeMsg struct {
+	session uint64
+	target  tunnel.Target
+	result  tunnel.ProbeResult
+	err     error
+	samples []tunnelProbeSample
 }
 
 func (m *menuModel) openTunnel() tea.Cmd {
@@ -270,7 +281,6 @@ func (m *menuModel) startTunnelSearch() tea.Cmd {
 		return m.setNotice(noticeWarning, m.t(i18n.TunnelNoTargets))
 	}
 
-	m.stopTunnelProbes()
 	m.screen = screenTunnelResults
 	m.selected = 0
 	m.clearNotice()
@@ -278,17 +288,23 @@ func (m *menuModel) startTunnelSearch() tea.Cmd {
 }
 
 func (m *menuModel) startTunnelRound(targets []tunnel.Target) tea.Cmd {
+	if m.tunnelMenu.probeCancel != nil {
+		m.tunnelMenu.probeCancel()
+		m.tunnelMenu.probeCancel = nil
+	}
 	if len(targets) == 0 {
+		m.stopTunnelProbes()
 		return nil
 	}
 	m.tunnelMenu.probes = make(map[string]tunnelProbeView, len(targets))
+	m.tunnelMenu.roundCache = tunnel.NewCache()
 
 	m.tunnelMenu.probeSession++
 	session := m.tunnelMenu.probeSession
 	m.tunnelMenu.probeRound++
 	m.tunnelMenu.pending = len(targets)
 	m.tunnelMenu.targets = append([]tunnel.Target(nil), targets...)
-	ctx, cancel := context.WithTimeout(context.Background(), tunnelRoundTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	m.tunnelMenu.probeCancel = cancel
 
 	now := time.Now()
@@ -306,6 +322,11 @@ func (m *menuModel) startTunnelRound(targets []tunnel.Target) tea.Cmd {
 	}
 
 	commands := make([]tea.Cmd, 0, len(prioritized))
+	slots := make(chan struct{}, tunnelProbeConcurrency)
+	count := 1
+	if m.screen == screenTunnelResults {
+		count = tunnelSearchProbeCount
+	}
 	for _, target := range prioritized {
 		view := m.tunnelMenu.probes[target.Key()]
 		view.checking = true
@@ -320,7 +341,7 @@ func (m *menuModel) startTunnelRound(targets []tunnel.Target) tea.Cmd {
 			) {
 			delay = tunnelPriorityHeadStart
 		}
-		commands = append(commands, tunnelProbeCmd(ctx, session, target, delay))
+		commands = append(commands, tunnelProbeCmd(ctx, session, target, delay, count, slots))
 	}
 	return tea.Batch(commands...)
 }
@@ -330,34 +351,62 @@ func tunnelProbeCmd(
 	session uint64,
 	target tunnel.Target,
 	delay time.Duration,
+	count int,
+	slots chan struct{},
 ) tea.Cmd {
 	return func() tea.Msg {
-		if delay > 0 {
-			timer := time.NewTimer(delay)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				return tunnelProbeMsg{
-					session:    session,
-					target:     target,
-					err:        ctx.Err(),
-					measuredAt: time.Now().UTC(),
+		msg := tunnelProbeMsg{session: session, target: target}
+		if err := ctx.Err(); err != nil {
+			msg.err = err
+			return msg
+		}
+		msg.samples = make([]tunnelProbeSample, 0, count)
+		replied := false
+		for attempt := range count {
+			if attempt > 0 {
+				delay = tunnelProbeInterval
+			}
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					msg.err = ctx.Err()
+					return msg
 				}
 			}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				msg.err = ctx.Err()
+				return msg
+			}
+			if err := ctx.Err(); err != nil {
+				<-slots
+				msg.err = err
+				return msg
+			}
+			result, err := (tunnel.Prober{Timeout: tunnel.ProbeTimeout}).Probe(ctx, target.Endpoint)
+			<-slots
+			if ctx.Err() != nil {
+				msg.err = ctx.Err()
+				return msg
+			}
+			msg.samples = append(msg.samples, tunnelProbeSample{
+				result: result, err: err, measuredAt: time.Now().UTC(),
+			})
+			if err == nil {
+				msg.result = result
+				replied = true
+			} else {
+				msg.err = err
+			}
 		}
-
-		result, err := (tunnel.Prober{Timeout: tunnelRoundTimeout}).Probe(
-			ctx,
-			target.Endpoint,
-		)
-		return tunnelProbeMsg{
-			session:    session,
-			target:     target,
-			result:     result,
-			err:        err,
-			measuredAt: time.Now().UTC(),
+		if replied {
+			msg.err = nil
 		}
+		return msg
 	}
 }
 
@@ -397,7 +446,23 @@ func (m *menuModel) updateTunnel(msg tea.Msg) (tea.Cmd, bool) {
 		view.checking = false
 		view.freshSuccess = msg.err == nil
 		m.tunnelMenu.probes[msg.target.Key()] = view
-		m.tunnelMenu.cache.Record(msg.target, msg.result, msg.err, msg.measuredAt)
+		for index, sample := range msg.samples {
+			m.tunnelMenu.roundCache.Record(msg.target, sample.result, sample.err, sample.measuredAt)
+			m.tunnelMenu.cache.Record(msg.target, sample.result, sample.err, sample.measuredAt)
+			if sample.err == nil {
+				slog.Info(
+					"tunnel probe reply",
+					"region", msg.target.Region,
+					"pool", msg.target.Pool,
+					"node", msg.target.Endpoint.Name,
+					"round", m.tunnelMenu.probeRound,
+					"probe", index+1,
+					"client_rtt_ms", float64(sample.result.ClientRTT)/float64(time.Millisecond),
+					"server_rtt_ms", sample.result.ServerRTT.Milliseconds(),
+					"limit_reached", sample.result.LimitReached,
+				)
+			}
+		}
 		if m.tunnelMenu.pending > 0 {
 			m.tunnelMenu.pending--
 		}
@@ -680,24 +745,29 @@ func (m menuModel) tunnelResultItems() []menuItem {
 	unavailable := m.tunnelUnavailableSearchTargets()
 	items := make([]menuItem, 0, len(ranked)+len(unavailable)+5)
 
+	best := bestTunnelResultIndex(ranked, m.tunnelMenu.pending)
 	useBestDetail := m.t(i18n.TunnelNoResults)
-	if len(ranked) > 0 {
+	if best >= 0 {
 		useBestDetail = m.t(
 			i18n.TunnelUseBestDetail,
-			ranked[0].Target.Pool,
-			ranked[0].Target.Endpoint.Name,
+			ranked[best].Target.Pool,
+			ranked[best].Target.Endpoint.Name,
 		)
+	}
+	if m.tunnelMenu.pending > 0 || (len(ranked) > 0 && best < 0) {
+		useBestDetail = m.t(i18n.TunnelResultProvisional)
 	}
 	items = append(items, menuItem{
 		label:    m.t(i18n.TunnelUseBestLabel),
 		detail:   useBestDetail,
-		disabled: len(ranked) == 0 || m.tunnelSettingsLocked(),
+		disabled: best < 0 || m.tunnelSettingsLocked(),
 		run: func(m *menuModel) tea.Cmd {
 			current := m.tunnelRankedResults()
-			if len(current) == 0 {
+			best := bestTunnelResultIndex(current, m.tunnelMenu.pending)
+			if best < 0 {
 				return nil
 			}
-			return m.selectTunnelTarget(current[0].Target)
+			return m.selectTunnelTarget(current[best].Target)
 		},
 	})
 	items = append(items, menuItem{
@@ -737,7 +807,7 @@ func (m menuModel) tunnelResultItems() []menuItem {
 			index+1,
 			result.Target.Pool,
 			result.Target.Endpoint.Name,
-			formatTunnelLatency(result.Score),
+			m.t(i18n.TunnelResultScore, fmt.Sprintf("%.1f", result.Score)),
 		)
 		items = append(items, menuItem{
 			label:    label,
@@ -763,6 +833,46 @@ func (m menuModel) tunnelResultItems() []menuItem {
 	return append(items, m.tunnelBackItem(m.t(i18n.BackPrevious), func(m *menuModel) {
 		m.showTunnelSearch()
 	}))
+}
+
+func bestTunnelResultIndex(ranked []tunnel.RankedTarget, pending int) int {
+	if pending > 0 {
+		return -1
+	}
+	for index, result := range ranked {
+		if result.Metrics.Successes >= tunnelMinimumReplies {
+			return index
+		}
+	}
+	return -1
+}
+
+func (m menuModel) renderTunnelResultWindow(items []menuItem, width, maxRows int) string {
+	candidateEnd := len(items) - 1
+	candidateCount := candidateEnd - tunnelResultActionRows
+	candidateRows := maxRows - tunnelResultActionRows - 1
+	if candidateCount > tunnelResultCandidateRows || candidateCount > candidateRows {
+		candidateRows -= 2
+	}
+	candidateRows = min(candidateRows, tunnelResultCandidateRows, candidateCount)
+	if candidateRows <= 0 {
+		return renderItemWindow(items, m.selected, width, min(maxRows, tunnelResultCandidateRows+2))
+	}
+
+	start := clampInt(m.selected-tunnelResultActionRows-candidateRows/2, 0, candidateCount-candidateRows)
+	end := start + candidateRows
+	candidates := items[tunnelResultActionRows:candidateEnd]
+	lines := make([]string, 0, 5)
+	lines = append(lines, renderItems(items[:tunnelResultActionRows], m.selected, width))
+	if start > 0 {
+		lines = append(lines, renderListBoundary(width, "^"))
+	}
+	lines = append(lines, renderItems(candidates[start:end], m.selected-tunnelResultActionRows-start, width))
+	if end < len(candidates) {
+		lines = append(lines, renderListBoundary(width, "v"))
+	}
+	lines = append(lines, renderItem(items[candidateEnd], m.selected == candidateEnd, width))
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (m menuModel) tunnelBackItem(
@@ -868,6 +978,9 @@ func (m menuModel) tunnelBody() string {
 		total := len(m.tunnelMenu.targets)
 		done, replies := m.tunnelRoundCounts()
 		if m.tunnelMenu.pending > 0 {
+			if m.screen == screenTunnelResults {
+				return infoStyle.Render(m.t(i18n.TunnelResultProgress, done, total, tunnelSearchProbeCount))
+			}
 			return infoStyle.Render(
 				m.t(
 					i18n.TunnelProgress,
@@ -983,7 +1096,7 @@ func (m menuModel) tunnelHistoryDetail(metrics tunnel.Metrics) string {
 
 func (m menuModel) tunnelEndpointTones() map[string]lipgloss.TerminalColor {
 	available := m.tunnelAvailableTargets()
-	ranked := m.tunnelMenu.cache.Rank(
+	ranked := m.tunnelMenu.roundCache.Rank(
 		available,
 		tunnel.SearchModePing,
 		1,
@@ -997,15 +1110,12 @@ func (m menuModel) tunnelRankedResults() []tunnel.RankedTarget {
 	if !ok {
 		return nil
 	}
-	ranked := m.tunnelMenu.cache.Rank(
+	ranked := m.tunnelMenu.roundCache.Rank(
 		m.tunnelAvailableTargets(),
 		m.tunnelMenu.settings.TunnelSearch.Mode,
 		catalog.ClientToTunnelRTTWeight,
 		time.Now(),
 	)
-	if len(ranked) > maxTunnelSearchResults {
-		ranked = ranked[:maxTunnelSearchResults]
-	}
 	return ranked
 }
 
@@ -1028,27 +1138,19 @@ func (m menuModel) tunnelAvailableTargets() []tunnel.Target {
 }
 
 func (m menuModel) tunnelUnavailableSearchTargets() []tunnel.Target {
-	now := time.Now()
 	targets := make([]tunnel.Target, 0)
 	for _, target := range m.tunnelMenu.targets {
 		if m.tunnelMenu.settings.IsExcluded(target.Region, target.Pool) {
 			continue
 		}
 		view := m.tunnelMenu.probes[target.Key()]
-		limited := m.tunnelMenu.cache.WasRecentlyLimited(
-			target.Region,
-			target.Endpoint.Address,
-			now,
-		)
 		if view.received &&
 			view.err == nil &&
 			!view.result.LimitReached &&
-			!limited {
+			view.freshSuccess {
 			continue
 		}
-		if limited || (view.received && view.err == nil && view.result.LimitReached) {
-			targets = append(targets, target)
-		}
+		targets = append(targets, target)
 	}
 	return targets
 }
@@ -1094,18 +1196,24 @@ func rankedTargetTones(
 }
 
 func (m menuModel) tunnelResultDetail(result tunnel.RankedTarget) string {
-	return m.t(
-		i18n.TunnelResultDetail,
+	current := m.tunnelMenu.probes[result.Target.Key()].result
+	detail := m.t(
+		i18n.TunnelResultSeries,
 		result.Target.Endpoint.Address,
-		formatTunnelLatency(result.Metrics.ClientRTT),
-		formatTunnelLatency(result.Metrics.ServerRTT),
-		formatTunnelLatency(result.Metrics.Ping),
+		formatTunnelLatency(result.Metrics.Median),
 		formatTunnelLatency(result.Metrics.P90),
-		formatTunnelLatency(result.Metrics.Jitter),
 		fmt.Sprintf("%.0f%%", result.Metrics.LossRate*100),
 		result.Metrics.Successes,
 		result.Metrics.Samples,
+		formatTunnelDuration(current.ClientRTT),
+		formatTunnelDuration(current.ServerRTT),
+		formatTunnelDuration(current.ClientRTT+current.ServerRTT),
+		formatTunnelLatency(result.Metrics.Max),
 	)
+	if m.tunnelMenu.pending > 0 || result.Metrics.Successes < tunnelMinimumReplies {
+		detail += "\n" + m.t(i18n.TunnelResultProvisional)
+	}
+	return detail
 }
 
 func (m menuModel) tunnelModeLabel(mode tunnel.SearchMode) string {

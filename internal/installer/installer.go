@@ -10,9 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"unsafe"
 
-	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/logging"
@@ -30,6 +28,8 @@ var Targets = []string{
 	"stalzone.exe",
 	"stalzonew.exe",
 }
+
+var legacyTargets = []string{"stalcraft.exe", "stalcraftw.exe"}
 
 // Entry reports the install state of a single target.
 type Entry struct {
@@ -50,27 +50,20 @@ func Install() error {
 		return err
 	}
 
-	usersSID, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
-	if err != nil {
-		return fmt.Errorf("resolve BUILTIN\\Users SID: %w", err)
-	}
-
-	configured := make([]string, 0, len(Targets))
+	command := `"` + service + `"`
+	changes := make([]debuggerChange, 0, len(Targets))
 	for _, target := range Targets {
-		modified, err := setDebugger(target, service, usersSID)
+		change, err := setDebugger(target, command)
 		if err != nil {
 			slog.Error("installer target failed", "action", "install", "target", target, "err", err)
-			rollbackTargets := append([]string(nil), configured...)
-			if modified {
-				rollbackTargets = append(rollbackTargets, target)
-			}
-			cleanupErr := deleteTargets("rollback", rollbackTargets)
-			if cleanupErr != nil {
+			if cleanupErr := rollbackChanges(changes, command); cleanupErr != nil {
 				return errors.Join(err, fmt.Errorf("rollback partial install: %w", cleanupErr))
 			}
 			return err
 		}
-		configured = append(configured, target)
+		if change.changed {
+			changes = append(changes, change)
+		}
 		slog.Info("installer target set", "target", target, "debugger", logging.RedactPath(service))
 	}
 	slog.Info("installer done", "action", "install")
@@ -123,136 +116,158 @@ func resolveService() (string, error) {
 	return path, nil
 }
 
-func setDebugger(target, debugger string, deleteSID *windows.SID) (modified bool, err error) {
-	key, openedExisting, err := registry.CreateKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.ALL_ACCESS)
+type debuggerChange struct {
+	target       string
+	previous     string
+	previousType uint32
+	changed      bool
+}
+
+func setDebugger(target, command string) (debuggerChange, error) {
+	key, _, err := registry.CreateKey(
+		registry.LOCAL_MACHINE,
+		ifeoPath+`\`+target,
+		registry.QUERY_VALUE|registry.SET_VALUE|registry.WOW64_64KEY,
+	)
 	if err != nil {
-		return false, fmt.Errorf("create IFEO key for %s: %w", target, err)
+		return debuggerChange{}, fmt.Errorf("create IFEO key for %s: %w", target, err)
 	}
 	defer key.Close()
-	modified = !openedExisting
 
-	if err := key.SetStringValue("Debugger", `"`+debugger+`"`); err != nil {
-		return modified, fmt.Errorf("set Debugger for %s: %w", target, err)
+	previous, previousType, err := key.GetStringValue("Debugger")
+	if errors.Is(err, registry.ErrNotExist) {
+		previousType = 0
+	} else if err != nil {
+		return debuggerChange{}, fmt.Errorf("read Debugger for %s; left unchanged: %w", target, err)
+	} else if !ownedDebugger(previous) {
+		return debuggerChange{}, fmt.Errorf("IFEO Debugger for %s belongs to another program; left unchanged", target)
 	}
-	modified = true
-	if err := allowKeyDelete(key, deleteSID); err != nil {
-		return modified, fmt.Errorf("grant delete permission for %s: %w", target, err)
+	if previousType == registry.SZ && previous == command {
+		return debuggerChange{}, nil
 	}
-	return modified, nil
+	if err := key.SetStringValue("Debugger", command); err != nil {
+		return debuggerChange{}, fmt.Errorf("set Debugger for %s: %w", target, err)
+	}
+	return debuggerChange{
+		target:       target,
+		previous:     previous,
+		previousType: previousType,
+		changed:      true,
+	}, nil
 }
 
-func allowKeyDelete(key registry.Key, sid *windows.SID) error {
-	sd, err := windows.GetSecurityInfo(
-		windows.Handle(key),
-		windows.SE_REGISTRY_KEY,
-		windows.DACL_SECURITY_INFORMATION,
-	)
-	if err != nil {
-		return err
-	}
-
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return err
-	}
-	if dacl == nil {
-		return nil
-	}
-	if daclAllowsDelete(dacl, sid) {
-		return nil
-	}
-
-	ace := windows.EXPLICIT_ACCESS{
-		AccessPermissions: windows.DELETE,
-		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       windows.NO_INHERITANCE,
-		Trustee: windows.TRUSTEE{
-			TrusteeForm:  windows.TRUSTEE_IS_SID,
-			TrusteeType:  windows.TRUSTEE_IS_GROUP,
-			TrusteeValue: windows.TrusteeValueFromSID(sid),
-		},
-	}
-	newDACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ace}, dacl)
-	if err != nil {
-		return err
-	}
-
-	return windows.SetSecurityInfo(
-		windows.Handle(key),
-		windows.SE_REGISTRY_KEY,
-		windows.DACL_SECURITY_INFORMATION,
-		nil,
-		nil,
-		newDACL,
-		nil,
-	)
-}
-
-func daclAllowsDelete(dacl *windows.ACL, sid *windows.SID) bool {
-	if dacl == nil {
-		return false
-	}
-	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(dacl, i, &ace); err != nil {
-			continue
-		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			continue
-		}
-		if ace.Mask&windows.DELETE == 0 {
-			continue
-		}
-		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if windows.EqualSid(aceSID, sid) {
-			return true
-		}
-	}
-	return false
-}
-
-// Uninstall removes each IFEO target key, accumulating errors.
-func Uninstall() error {
-	slog.Info("installer start", "action", "uninstall")
-	errs := deleteTargets("uninstall", Targets)
-	slog.Info("installer done", "action", "uninstall", "errors", countErrors(errs))
-	return errs
-}
-
-func deleteTargets(action string, targets []string) error {
+func rollbackChanges(changes []debuggerChange, command string) error {
 	var errs []error
-	for _, target := range targets {
-		if err := deleteTargetKey(target); err != nil {
-			slog.Warn("installer target failed", "action", action, "target", target, "err", err)
+	for i := len(changes) - 1; i >= 0; i-- {
+		change := changes[i]
+		if err := restoreDebugger(change, command); err != nil {
+			slog.Warn("installer target failed", "action", "rollback", "target", change.target, "err", err)
 			errs = append(errs, err)
-			continue
 		}
-		slog.Info("installer target cleared", "action", action, "target", target)
 	}
 	return errors.Join(errs...)
 }
 
-func deleteTargetKey(target string) error {
-	if err := registry.DeleteKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target); err != nil {
-		if errors.Is(err, registry.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("delete IFEO key for %s: %w", target, err)
+func restoreDebugger(change debuggerChange, command string) error {
+	key, err := registry.OpenKey(
+		registry.LOCAL_MACHINE,
+		ifeoPath+`\`+change.target,
+		registry.QUERY_VALUE|registry.SET_VALUE|registry.WOW64_64KEY,
+	)
+	if err != nil {
+		return fmt.Errorf("open IFEO key for %s during rollback: %w", change.target, err)
+	}
+	defer key.Close()
+
+	current, currentType, err := key.GetStringValue("Debugger")
+	if err != nil {
+		return fmt.Errorf("read Debugger for %s during rollback: %w", change.target, err)
+	}
+	if currentType != registry.SZ || current != command {
+		return fmt.Errorf("IFEO Debugger for %s changed during install; rollback left it unchanged", change.target)
+	}
+	switch change.previousType {
+	case 0:
+		err = key.DeleteValue("Debugger")
+	case registry.SZ:
+		err = key.SetStringValue("Debugger", change.previous)
+	case registry.EXPAND_SZ:
+		err = key.SetExpandStringValue("Debugger", change.previous)
+	}
+	if err != nil {
+		return fmt.Errorf("restore Debugger for %s: %w", change.target, err)
 	}
 	return nil
 }
 
-func countErrors(err error) int {
-	if err == nil {
-		return 0
+// Uninstall removes only wrapper-owned Debugger values. It preserves each key,
+// its permissions, other values and subkeys, and works without service.exe.
+// Access-denied errors remain recognizable with errors.Is so callers can
+// request elevation for older installations that lack write permission.
+func Uninstall() error {
+	slog.Info("installer start", "action", "uninstall")
+	var errs []error
+	for _, targets := range [][]string{Targets, legacyTargets} {
+		for _, target := range targets {
+			if err := clearDebugger(target); err != nil {
+				slog.Warn("installer target failed", "action", "uninstall", "target", target, "err", err)
+				errs = append(errs, err)
+				continue
+			}
+			slog.Info("installer target cleared", "action", "uninstall", "target", target)
+		}
 	}
-	type unwrapper interface {
-		Unwrap() []error
+	slog.Info("installer done", "action", "uninstall", "errors", len(errs))
+	return errors.Join(errs...)
+}
+
+func clearDebugger(target string) error {
+	path := ifeoPath + `\` + target
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE|registry.WOW64_64KEY)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
 	}
-	if joined, ok := err.(unwrapper); ok {
-		return len(joined.Unwrap())
+	if err != nil {
+		return fmt.Errorf("read IFEO key for %s: %w", target, err)
 	}
-	return 1
+	debugger, valueType, err := key.GetStringValue("Debugger")
+	key.Close()
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Debugger for %s; left unchanged: %w", target, err)
+	}
+	if !ownedDebugger(debugger) {
+		return fmt.Errorf("IFEO Debugger for %s belongs to another program; left unchanged", target)
+	}
+
+	key, err = registry.OpenKey(
+		registry.LOCAL_MACHINE,
+		path,
+		registry.QUERY_VALUE|registry.SET_VALUE|registry.WOW64_64KEY,
+	)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open IFEO key for %s to remove Debugger: %w", target, err)
+	}
+	defer key.Close()
+	current, currentType, err := key.GetStringValue("Debugger")
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Debugger for %s before removal: %w", target, err)
+	}
+	if currentType != valueType || current != debugger {
+		return fmt.Errorf("IFEO Debugger for %s changed during uninstall; left unchanged", target)
+	}
+	if err := key.DeleteValue("Debugger"); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return fmt.Errorf("delete Debugger for %s: %w", target, err)
+	}
+	return nil
 }
 
 // Status reads the current Debugger value for each target.
@@ -266,7 +281,7 @@ func Status() []Entry {
 
 func statusFor(target string) Entry {
 	e := Entry{Target: target}
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, ifeoPath+`\`+target, registry.QUERY_VALUE|registry.WOW64_64KEY)
 	if err != nil {
 		return e
 	}

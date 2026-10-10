@@ -15,13 +15,16 @@ const (
 	probeRequestSize     = 16
 	probeResponseSize    = 21
 	maxProbeDatagramSize = 64 * 1024
-	defaultProbeLimit    = time.Second
 )
+
+// ProbeTimeout is the default per-probe deadline and ranking failure penalty.
+const ProbeTimeout = time.Second
 
 var ErrProbeTimeout = errors.New("tunnel probe timeout")
 
 type ProbeResult struct {
-	ClientRTT    time.Duration
+	ClientRTT time.Duration
+	// ServerRTT is reported by the tunnel in its reply, not measured locally.
 	ServerRTT    time.Duration
 	LimitReached bool
 }
@@ -38,7 +41,7 @@ func (p Prober) Probe(ctx context.Context, endpoint Endpoint) (ProbeResult, erro
 
 	timeout := p.Timeout
 	if timeout <= 0 {
-		timeout = defaultProbeLimit
+		timeout = ProbeTimeout
 	}
 
 	token := make([]byte, probeRequestSize)

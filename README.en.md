@@ -87,10 +87,18 @@ The utility is installed **once** and automatically runs each time the game is l
 
 ### Uninstallation
 
-1. Run `cli.exe`, select `Uninstall` in the menu using the arrow keys and press **Enter**.
-2. Navigate to the game folder.
+1. Run `cli.exe`, select `Uninstall`, and approve the administrator prompt.
+2. Wait for successful removal, then navigate to the game folder.
 3. Delete the `jvm_wrapper` folder.
 4. Restart the game if it is running.
+
+If an old installation cannot be removed or its binaries are already missing, run the recovery script included in the release archive:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+It removes only wrapper-owned `Debugger` values for `stalzone.exe` / `stalzonew.exe` and legacy `stalcraft.exe` / `stalcraftw.exe`, including `wrapper.exe` installations, without requiring the executable to exist. Other IFEO settings and foreign debuggers are preserved. Do not delete the wrapper directory before hook removal succeeds.
 
 ### Configuration
 
@@ -121,12 +129,15 @@ The same operations are available as CLI commands:
 - `cli.exe config releases`
 - `cli.exe config regenerate v1.1.2`
 - `cli.exe config select v1.1.2/default`
+- `cli.exe config disable`
+
+Select **No JVM optimization** at the root of the config menu, or run `cli.exe config disable`, to preserve the launcher's JVM parameters. Tunnel overrides remain active; only selected `-Droxy_address_override.<region>` properties are replaced. Selecting a profile enables optimization again. This mode is stored as `ActiveConfig=<none>`; no JSON files need to be deleted.
 
 #### Tunnel Override (Experimental)
 
 The `Tunnel override` menu lets you independently select a specific Roxy node for RU, EU, NA, SEA, and NEA at the same time. `Game default` lives inside each region and clears only that region's override. A regional list is requested only after that region is opened. Opening a group measures all of its nodes concurrently and shows the PC-to-tunnel RTT, tunnel-to-backend RTT, and their sum separately. There are no background repeat rounds; another measurement starts only after reopening the view or selecting `Measure again`.
 
-`Search best server` measures every node outside the persistent exclusion list and shows the best five. Results can be ranked by total ping, client RTT, server RTT, stability, or the weight reported by the game backend. A node that reports a connection limit remains visible, but cannot be selected until a fresh successful measurement clears the limit.
+`Search best server` collects a fresh series of 10 probes per node outside the persistent exclusion list and lets you scroll through every ranked result, five candidates at a time. Modes compare total RTT, client RTT, server RTT, stability, or backend-weighted RTT using a robust score and a failed-probe penalty; stability prioritizes P90. History is supplemental only, and `Measure again` replaces the search series. Details show the series median/P90, failed probes and sample counts, and the last successful raw RTTs. Results remain preliminary until every series finishes or when a candidate has fewer than five successful replies; automatic `Use best` requires all series to finish and at least five successful replies for the chosen node. A connection-limited node remains visible but cannot be selected until a fresh successful measurement clears the limit. These scores and failed-probe percentages are not measured game ping or game packet loss. See [the overview](./docs/OVERVIEW.en.md#tunnel-override) for the equations and timing limits.
 
 Selections and search settings live in `jvm_wrapper/overrides.json`; up to 20 recent measurements per node live in `jvm_wrapper/cache/tunnel_stats.json` and expire after 24 hours. `Regenerate Config` does not touch either file. At game startup, `service.exe` only validates the stored addresses and adds one JVM property per configured region; it performs no network measurements on the launch path.
 

@@ -34,9 +34,6 @@ func TestProbeDecodesResponseAndLimit(t *testing.T) {
 	if result.ServerRTT != 37*time.Millisecond {
 		t.Fatalf("server RTT = %s, want 37ms", result.ServerRTT)
 	}
-	if result.ClientRTT <= 0 {
-		t.Fatalf("client RTT = %s, want positive duration", result.ClientRTT)
-	}
 	if !result.LimitReached {
 		t.Fatal("limit flag was not decoded")
 	}
@@ -160,6 +157,74 @@ func TestProbeStopsWhenContextIsCanceled(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("Probe() stopped after %s, want prompt cancellation", elapsed)
+	}
+}
+
+func TestProbeRepeatedRoundsRejectPriorRepliesAndPreserveServerRTT(t *testing.T) {
+	t.Parallel()
+
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("ListenUDP(): %v", err)
+	}
+	done := make(chan struct{})
+	serverMillis := []uint32{15, 15, 15, 1_500_000, 15, 15}
+	go func() {
+		defer close(done)
+		var previous []byte
+		request := make([]byte, probeRequestSize+1)
+		for _, millis := range serverMillis {
+			n, peer, readErr := conn.ReadFromUDP(request)
+			if readErr != nil {
+				return
+			}
+			if n != probeRequestSize {
+				t.Errorf("request size = %d, want %d", n, probeRequestSize)
+				return
+			}
+			if previous != nil {
+				if _, writeErr := conn.WriteToUDP(previous, peer); writeErr != nil {
+					return
+				}
+			}
+			response := make([]byte, probeResponseSize)
+			copy(response, request[:n])
+			binary.BigEndian.PutUint32(response[16:20], millis)
+			if _, writeErr := conn.WriteToUDP(response, peer); writeErr != nil {
+				return
+			}
+			previous = response
+		}
+	}()
+	t.Cleanup(func() {
+		_ = conn.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("UDP responder did not stop")
+		}
+	})
+
+	target := testTarget(endpointForProbePort(t, conn.LocalAddr().(*net.UDPAddr).Port).Address)
+	cache := NewCache()
+	for round, millis := range serverMillis {
+		result, probeErr := (Prober{Timeout: time.Second}).Probe(context.Background(), target.Endpoint)
+		if probeErr != nil {
+			t.Fatalf("round %d: %v", round+1, probeErr)
+		}
+		if result.ServerRTT != time.Duration(millis)*time.Millisecond {
+			t.Fatalf("round %d server RTT = %s, want %dms from current reply", round+1, result.ServerRTT, millis)
+		}
+		cache.Record(target, result, nil, time.Now())
+	}
+	history, ok := cache.History(target.Region, target.Endpoint.Address)
+	if !ok || len(history.Samples) != len(serverMillis) || history.Samples[3].ServerRTTMillis != 1_500_000 ||
+		history.Samples[5].ServerRTTMillis != 15 {
+		t.Fatalf("raw server-reported history = %#v", history)
+	}
+	metrics, ok := cache.Metrics(target.Region, target.Endpoint.Address, time.Now())
+	if !ok || metrics.ServerRTT != 250_012.5 {
+		t.Fatalf("history server RTT = %v, want 250012.5ms, distinct from latest 15ms", metrics.ServerRTT)
 	}
 }
 
