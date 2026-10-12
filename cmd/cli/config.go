@@ -24,6 +24,7 @@ func newConfigCommand() *cobra.Command {
 		newConfigListCommand(),
 		newConfigActiveCommand(),
 		newConfigSelectCommand(),
+		newConfigDisableCommand(),
 		newConfigReleasesCommand(),
 		newConfigRegenerateCommand(),
 	)
@@ -90,6 +91,21 @@ func newConfigSelectCommand() *cobra.Command {
 				return err
 			}
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "active config set to: %s\n", id)
+			return err
+		},
+	}
+}
+
+func newConfigDisableCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "disable",
+		Short: "Keep launcher JVM arguments without disabling tunnel overrides",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := config.SetActive(config.NoProfile); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "JVM optimization disabled; tunnel overrides remain active")
 			return err
 		},
 	}

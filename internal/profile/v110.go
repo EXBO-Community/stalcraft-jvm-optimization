@@ -5,6 +5,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 )
 
+// Modern cache-aware generator. More aggressive profile, up to 8GB heap.
 func generateV110Default(sys sysinfo.Info) config.Config {
 	heap := sizeHeapV110(sys.TotalGB())
 	parallel, concurrent := gcThreadsModern(sys.CPUThreads)

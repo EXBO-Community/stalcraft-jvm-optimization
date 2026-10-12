@@ -97,7 +97,7 @@ func TestFreshProbeClearsCachedLimit(t *testing.T) {
 	}
 }
 
-func TestMetricsAndScores(t *testing.T) {
+func TestCacheMetricsPreservesHistoricalSummaries(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
@@ -117,9 +117,12 @@ func TestMetricsAndScores(t *testing.T) {
 			ServerRTTMillis: 15,
 		},
 	}
-	metrics, ok := calculateMetrics(samples, now, RecentHistoryTTL)
+	target := testTarget("192.0.2.10:29450")
+	cache := NewCache()
+	cache.Endpoints[target.Key()] = EndpointHistory{Samples: samples}
+	metrics, ok := cache.Metrics(target.Region, target.Endpoint.Address, now)
 	if !ok {
-		t.Fatal("calculateMetrics() returned no metrics")
+		t.Fatal("Metrics() returned no metrics")
 	}
 	if metrics.Samples != 3 || metrics.Successes != 2 {
 		t.Fatalf("counts = %d/%d, want 2/3 successes", metrics.Successes, metrics.Samples)
@@ -130,11 +133,9 @@ func TestMetricsAndScores(t *testing.T) {
 	if metrics.LossRate != 1.0/3.0 {
 		t.Fatalf("loss = %v, want 1/3", metrics.LossRate)
 	}
-	if score, _ := metrics.Score(SearchModeGame, 1.5); score != 40 {
-		t.Fatalf("game-weighted score = %.1f, want 40", score)
-	}
-	if score, _ := metrics.Score(SearchModeStability, 1); score <= metrics.Ping {
-		t.Fatalf("stability score %.1f did not penalize loss/jitter", score)
+	if metrics.Median != 30 || metrics.P90 != 45 || metrics.Max != 45 || metrics.Jitter != 30 {
+		t.Fatalf("distribution = median %.1f P90 %.1f max %.1f jitter %.1f, want 30/45/45/30",
+			metrics.Median, metrics.P90, metrics.Max, metrics.Jitter)
 	}
 }
 
@@ -158,24 +159,311 @@ func TestCacheRankSortsBySelectedMode(t *testing.T) {
 		now,
 	)
 
-	byClient := cache.Rank(
-		[]Target{fastServer, fastClient},
-		SearchModeClientRTT,
-		1,
-		now,
-	)
-	if len(byClient) != 2 || byClient[0].Target.Key() != fastClient.Key() {
-		t.Fatalf("client ranking = %#v", byClient)
+	for _, tt := range []struct {
+		mode   SearchMode
+		first  Target
+		scores [2]float64
+	}{
+		{SearchModeClientRTT, fastClient, [2]float64{5, 15}},
+		{SearchModeServerRTT, fastServer, [2]float64{1, 20}},
+		{SearchModePing, fastServer, [2]float64{16, 25}},
+		{SearchModeStability, fastServer, [2]float64{16, 25}},
+		{SearchModeGame, fastClient, [2]float64{30, 31}},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			ranked := cache.Rank([]Target{fastServer, fastClient}, tt.mode, 2, now)
+			if len(ranked) != 2 || ranked[0].Target.Key() != tt.first.Key() {
+				t.Fatalf("ranking = %#v, want %s first", ranked, tt.first.Endpoint.Address)
+			}
+			if ranked[0].Score != tt.scores[0] || ranked[1].Score != tt.scores[1] {
+				t.Fatalf("scores = %v/%v, want %v/%v",
+					ranked[0].Score, ranked[1].Score, tt.scores[0], tt.scores[1])
+			}
+		})
+	}
+}
+
+func TestCacheRankPrefersStableSeriesOverLowerNoisyMedian(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	stable := testTarget("192.0.2.10:29450")
+	noisy := testTarget("192.0.2.11:29450")
+	cache := NewCache()
+	for i := range 10 {
+		measuredAt := now.Add(-time.Duration(9-i) * time.Second)
+		cache.Record(stable, ProbeResult{
+			ClientRTT: 30 * time.Millisecond,
+			ServerRTT: 30 * time.Millisecond,
+		}, nil, measuredAt)
+		latency := 20 * time.Millisecond
+		if i >= 8 {
+			latency = 60 * time.Millisecond
+		}
+		cache.Record(noisy, ProbeResult{
+			ClientRTT: latency,
+			ServerRTT: latency,
+		}, nil, measuredAt)
 	}
 
-	byServer := cache.Rank(
-		[]Target{fastClient, fastServer},
-		SearchModeServerRTT,
-		1,
-		now,
-	)
-	if len(byServer) != 2 || byServer[0].Target.Key() != fastServer.Key() {
-		t.Fatalf("server ranking = %#v", byServer)
+	for _, tt := range []struct {
+		mode       SearchMode
+		noisyScore float64
+	}{
+		{SearchModePing, 80},
+		{SearchModeStability, 120},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			ranked := cache.Rank([]Target{noisy, stable}, tt.mode, 1, now)
+			if len(ranked) != 2 || ranked[0].Target.Key() != stable.Key() {
+				t.Fatalf("ranking = %#v, want stable series first", ranked)
+			}
+			if ranked[0].Score != 60 || ranked[1].Score != tt.noisyScore {
+				t.Fatalf("scores = %v/%v, want 60/%v",
+					ranked[0].Score, ranked[1].Score, tt.noisyScore)
+			}
+		})
+	}
+}
+
+func TestCacheRankResistsOneOutlierWithoutChangingRawHistory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	cache := NewCache()
+	for i := range 10 {
+		server := 15 * time.Millisecond
+		if i == 9 {
+			server = 2_000_000 * time.Millisecond
+		}
+		cache.Record(target, ProbeResult{
+			ClientRTT: 10 * time.Millisecond,
+			ServerRTT: server,
+		}, nil, now.Add(-time.Duration(9-i)*time.Second))
+	}
+	before, ok := cache.History(target.Region, target.Endpoint.Address)
+	if !ok || before.Samples[9].ServerRTTMillis != 2_000_000 {
+		t.Fatalf("raw outlier was not retained: %#v", before)
+	}
+
+	for _, tt := range []struct {
+		mode  SearchMode
+		score float64
+	}{
+		{SearchModePing, 25},
+		{SearchModeClientRTT, 10},
+		{SearchModeServerRTT, 15},
+		{SearchModeGame, 30},
+		{SearchModeStability, 25},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			ranked := cache.Rank([]Target{target}, tt.mode, 1.5, now)
+			if len(ranked) != 1 || ranked[0].Score != tt.score {
+				t.Fatalf("ranking = %#v, want score %v", ranked, tt.score)
+			}
+			metrics := ranked[0].Metrics
+			if metrics.Median != 25 || metrics.P90 != 25 || metrics.Max != 2_000_010 ||
+				metrics.ClientRTT != 10 || metrics.ServerRTT != 200_013.5 ||
+				metrics.Ping != 200_023.5 {
+				t.Fatalf("historical metrics lost the raw outlier: %#v", metrics)
+			}
+		})
+	}
+	after, _ := cache.History(target.Region, target.Endpoint.Address)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("ranking changed raw history: before %#v, after %#v", before, after)
+	}
+}
+
+func TestCacheRankUsesPairedSamplesForEachMode(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	cache := NewCache()
+	for _, pair := range [][2]time.Duration{
+		{0, 100 * time.Millisecond},
+		{10 * time.Millisecond, 0},
+		{100 * time.Millisecond, 10 * time.Millisecond},
+	} {
+		cache.Record(target, ProbeResult{
+			ClientRTT: pair[0],
+			ServerRTT: pair[1],
+		}, nil, now)
+	}
+
+	for _, tt := range []struct {
+		mode  SearchMode
+		score float64
+	}{
+		{SearchModePing, 105},
+		{SearchModeClientRTT, 55},
+		{SearchModeServerRTT, 55},
+		{SearchModeGame, 155},
+		{SearchModeStability, 110},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			ranked := cache.Rank([]Target{target}, tt.mode, 2, now)
+			if len(ranked) != 1 || ranked[0].Score != tt.score {
+				t.Fatalf("paired-sample ranking = %#v, want score %v", ranked, tt.score)
+			}
+			if ranked[0].Metrics.Median != 100 || ranked[0].Metrics.P90 != 110 {
+				t.Fatalf("paired total distribution = %#v, want median 100 and P90 110",
+					ranked[0].Metrics)
+			}
+		})
+	}
+}
+
+func TestCacheRankPenalizesFailuresEvenAboveProbeTimeout(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	for _, failures := range []struct {
+		name  string
+		count int
+	}{
+		{"none", 0},
+		{"one", 1},
+		{"four", 4},
+		{"nine", 9},
+		{"all", 10},
+	} {
+		t.Run(failures.name, func(t *testing.T) {
+			cache := NewCache()
+			for i := range 10 {
+				var probeErr error
+				if i < failures.count {
+					probeErr = ErrProbeTimeout
+				}
+				cache.Record(target, ProbeResult{
+					ClientRTT: 1500 * time.Millisecond,
+					ServerRTT: 1200 * time.Millisecond,
+				}, probeErr, now)
+			}
+			metrics, ok := cache.Metrics(target.Region, target.Endpoint.Address, now)
+			fraction := float64(failures.count) / 10
+			if !ok || metrics.Samples != 10 || metrics.Successes != 10-failures.count ||
+				metrics.LossRate != fraction {
+				t.Fatalf("failed series metrics = %#v, want %d/10 successes and failure fraction %v",
+					metrics, 10-failures.count, fraction)
+			}
+			for _, tt := range []struct {
+				mode SearchMode
+				base float64
+			}{
+				{SearchModePing, 2700},
+				{SearchModeClientRTT, 1500},
+				{SearchModeServerRTT, 1200},
+				{SearchModeGame, 4200},
+				{SearchModeStability, 2700},
+			} {
+				t.Run(string(tt.mode), func(t *testing.T) {
+					ranked := cache.Rank([]Target{target}, tt.mode, 2, now)
+					if failures.count == 10 {
+						if len(ranked) != 0 {
+							t.Fatalf("series with no successful replies was ranked: %#v", ranked)
+						}
+						return
+					}
+					want := tt.base + float64(ProbeTimeout/time.Millisecond)*fraction
+					if len(ranked) != 1 || math.Abs(ranked[0].Score-want) > 1e-9 {
+						t.Fatalf("ranking = %#v, want score %v", ranked, want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCacheRankQuantileBoundaries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	for _, tt := range []struct {
+		name   string
+		count  int
+		median float64
+		p90    float64
+		score  float64
+	}{
+		{"one", 1, 1, 1, 1},
+		{"two", 2, 1.5, 2, 1.75},
+		{"nine", 9, 5, 9, 7},
+		{"ten", 10, 5.5, 9, 7.25},
+		{"eleven", 11, 6, 10, 8},
+		{"twenty", 20, 10.5, 18, 14.25},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewCache()
+			for i := 1; i <= tt.count; i++ {
+				cache.Record(target, ProbeResult{
+					ClientRTT: time.Duration(i) * time.Millisecond,
+				}, nil, now.Add(-time.Duration(tt.count-i)*time.Second))
+			}
+			ranked := cache.Rank([]Target{target}, SearchModePing, 1, now)
+			if len(ranked) != 1 || ranked[0].Score != tt.score {
+				t.Fatalf("ranking = %#v, want score %v", ranked, tt.score)
+			}
+			metrics := ranked[0].Metrics
+			if metrics.Samples != tt.count || metrics.Successes != tt.count ||
+				metrics.Median != tt.median || metrics.P90 != tt.p90 ||
+				metrics.Max != float64(tt.count) {
+				t.Fatalf("distribution = %#v, want %d successes, median %v and P90 %v",
+					metrics, tt.count, tt.median, tt.p90)
+			}
+			stability := cache.Rank([]Target{target}, SearchModeStability, 1, now)
+			if len(stability) != 1 || stability[0].Score != tt.p90 {
+				t.Fatalf("stability ranking = %#v, want nearest-rank P90 %v", stability, tt.p90)
+			}
+		})
+	}
+}
+
+func TestCacheRankAndMetricsFilterInvalidOrExpiredSamples(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	invalidOnly := testTarget("192.0.2.11:29450")
+	empty := testTarget("192.0.2.12:29450")
+	missing := testTarget("192.0.2.13:29450")
+	samples := []Sample{
+		{MeasuredAt: now.Add(-RecentHistoryTTL), ClientRTTMicros: 2000, ServerRTTMillis: 4},
+		{MeasuredAt: now},
+		{MeasuredAt: now.Add(-time.Second), TimedOut: true},
+		{MeasuredAt: now, ClientRTTMicros: -1, ServerRTTMillis: 1},
+		{MeasuredAt: now, ClientRTTMicros: 1000, ServerRTTMillis: -1},
+		{MeasuredAt: now, ClientRTTMicros: -1, TimedOut: true},
+		{MeasuredAt: now.Add(time.Nanosecond), ClientRTTMicros: 1},
+		{MeasuredAt: now.Add(-RecentHistoryTTL - time.Nanosecond), ClientRTTMicros: 1},
+		{ClientRTTMicros: 1},
+	}
+	cache := NewCache()
+	cache.Endpoints[target.Key()] = EndpointHistory{Samples: samples}
+	cache.Endpoints[invalidOnly.Key()] = EndpointHistory{Samples: samples[3:]}
+	cache.Endpoints[empty.Key()] = EndpointHistory{}
+
+	metrics, ok := cache.Metrics(target.Region, target.Endpoint.Address, now)
+	if !ok || metrics.Samples != 3 || metrics.Successes != 2 || metrics.LossRate != 1.0/3.0 ||
+		metrics.ClientRTT != 1 || metrics.ServerRTT != 2 || metrics.Ping != 3 ||
+		metrics.Median != 3 || metrics.P90 != 6 || metrics.Jitter != 6 {
+		t.Fatalf("filtered metrics = %#v, want 2/3 successes and total median/mean 3, P90/jitter 6", metrics)
+	}
+	for _, excluded := range []Target{invalidOnly, empty, missing} {
+		if _, ok := cache.Metrics(excluded.Region, excluded.Endpoint.Address, now); ok {
+			t.Fatalf("%s produced metrics without valid recent samples", excluded.Endpoint.Address)
+		}
+	}
+	ranked := cache.Rank([]Target{invalidOnly, empty, missing, target}, SearchModePing, 1, now)
+	want := 4.5 + float64(ProbeTimeout/time.Millisecond)/3
+	if len(ranked) != 1 || ranked[0].Target.Key() != target.Key() ||
+		math.Abs(ranked[0].Score-want) > 1e-9 || ranked[0].Metrics != metrics {
+		t.Fatalf("filtered ranking = %#v, want only valid target with score %v and matching history metrics",
+			ranked, want)
 	}
 }
 
@@ -263,22 +551,57 @@ func TestCachePruneDropsFutureAndNegativeSamples(t *testing.T) {
 	}
 }
 
-func TestMetricsScoreRejectsNonFiniteValues(t *testing.T) {
+func TestCacheRankRejectsInvalidWeightsAndOverflow(t *testing.T) {
 	t.Parallel()
 
-	metrics := Metrics{
-		Successes: 1,
-		ClientRTT: 10,
-		ServerRTT: 5,
-		Ping:      15,
-		P90:       15,
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	target := testTarget("192.0.2.10:29450")
+	cache := NewCache()
+	cache.Record(target, ProbeResult{
+		ClientRTT: 2 * time.Millisecond,
+		ServerRTT: 3 * time.Millisecond,
+	}, nil, now)
+
+	for _, tt := range []struct {
+		name   string
+		weight float64
+	}{
+		{"negative", -1},
+		{"nan", math.NaN()},
+		{"positive infinity", math.Inf(1)},
+		{"negative infinity", math.Inf(-1)},
+		{"weighted latency overflow", math.MaxFloat64},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if ranked := cache.Rank([]Target{target}, SearchModeGame, tt.weight, now); len(ranked) != 0 {
+				t.Fatalf("invalid weighted latency was ranked: %#v", ranked)
+			}
+		})
 	}
-	if _, ok := metrics.Score(SearchModeGame, math.Inf(1)); ok {
-		t.Fatal("Score() accepted an infinite client weight")
+	ranked := cache.Rank([]Target{target}, SearchModeGame, 0, now)
+	if len(ranked) != 1 || ranked[0].Score != 3 {
+		t.Fatalf("zero client weight ranking = %#v, want server-only score 3", ranked)
 	}
-	metrics.ClientRTT = -1
-	if _, ok := metrics.Score(SearchModePing, 1); ok {
-		t.Fatal("Score() accepted negative metrics")
+}
+
+func TestRepeatedMeasurementsDoNotAccumulateRTT(t *testing.T) {
+	t.Parallel()
+
+	cache := NewCache()
+	target := testTarget("192.0.2.10:29450")
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	for round := range MaxHistory + 5 {
+		measuredAt := now.Add(time.Duration(round) * time.Second)
+		cache.Record(target, ProbeResult{
+			ClientRTT: 10 * time.Millisecond,
+			ServerRTT: 15 * time.Millisecond,
+		}, nil, measuredAt)
+		metrics, ok := cache.Metrics(target.Region, target.Endpoint.Address, measuredAt)
+		if !ok || metrics.ClientRTT != 10 || metrics.ServerRTT != 15 ||
+			metrics.Ping != 25 || metrics.P90 != 25 || metrics.Jitter != 0 ||
+			metrics.LossRate != 0 {
+			t.Fatalf("round %d metrics = %#v, want unchanged 25ms RTT", round+1, metrics)
+		}
 	}
 }
 

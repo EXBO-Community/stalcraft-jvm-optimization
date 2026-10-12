@@ -3,8 +3,15 @@
 *.obj
 *.o
 *.syso
+*.bundle
 
 build/
+configs/
+cache/
+logs/
+
+internal/profile/releases_generated.go
+internal/buildinfo/buildinfo_generated.go
 
 __debug_bin*
 
@@ -20,5 +27,6 @@ __debug_bin*
 
 mempalace.yaml
 entities.json
+overrides.json
 
 .DS_Store

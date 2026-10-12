@@ -145,19 +145,23 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m menuModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c", "q", "й":
 		return m, tea.Quit
 	case "esc", "backspace", "left":
 		m.goBack()
 		return m, nil
-	case "up", "k":
+	case "up", "k", "л":
 		if m.selected > 0 {
 			m.selected--
+		} else {
+			m.selected = len(m.items()) - 1
 		}
 		return m, nil
-	case "down", "j":
+	case "down", "j", "о":
 		if max := len(m.items()) - 1; m.selected < max {
 			m.selected++
+		} else {
+			m.selected = 0
 		}
 		return m, nil
 	case "enter", " ":
@@ -420,7 +424,21 @@ func (m menuModel) languageDetail(lang i18n.Language) string {
 
 func (m menuModel) configItems() []menuItem {
 	active := config.ActiveName()
-	items := make([]menuItem, 0, len(m.configEntries)+1)
+	items := make([]menuItem, 0, len(m.configEntries)+2)
+	if m.configPrefix == "" {
+		items = append(items, menuItem{
+			label:  m.t(i18n.ConfigDisableLabel),
+			detail: m.t(i18n.ConfigDisableDetail),
+			active: active == config.NoProfile,
+			run: func(m *menuModel) tea.Cmd {
+				if err := config.SetActive(config.NoProfile); err != nil {
+					return m.setNotice(noticeError, err.Error())
+				}
+				m.openMain()
+				return m.setNotice(noticeSuccess, m.t(i18n.NoticeConfigDisabled))
+			},
+		})
+	}
 	for _, entry := range m.configEntries {
 		e := entry
 		if e.IsDir {
@@ -529,12 +547,12 @@ func (m menuModel) View() string {
 
 	items := m.items()
 	itemRows := m.itemRowBudget(before.String(), after.String())
-	renderedItems := renderItemWindow(
-		items,
-		m.selected,
-		contentWidth,
-		itemRows,
-	)
+	var renderedItems string
+	if m.screen == screenTunnelResults {
+		renderedItems = m.renderTunnelResultWindow(items, contentWidth, itemRows)
+	} else {
+		renderedItems = renderItemWindow(items, m.selected, contentWidth, itemRows)
+	}
 
 	content := before.String() + renderedItems + after.String()
 	panel := panelStyle.Width(m.panelWidth()).Render(content)
@@ -647,6 +665,8 @@ func (m menuModel) profileTitle(maxWidth int) string {
 	active := config.ActiveName()
 	if active == "" {
 		active = m.t(i18n.ProfileUnset)
+	} else if active == config.NoProfile {
+		active = m.t(i18n.ConfigDisableLabel)
 	}
 
 	label := m.t(i18n.ProfileLabel)
@@ -910,8 +930,12 @@ func installCmd(catalog *i18n.Catalog, lang i18n.Language) tea.Cmd {
 
 func uninstallCmd(catalog *i18n.Catalog, lang i18n.Language) tea.Cmd {
 	return func() tea.Msg {
-		if err := installer.Uninstall(); err != nil {
+		code, err := elevate.Run("uninstall")
+		if err != nil {
 			return actionResultMsg{kind: noticeError, text: err.Error()}
+		}
+		if code != 0 {
+			return actionResultMsg{kind: noticeError, text: catalog.T(lang, i18n.NoticeUninstallFailed, code)}
 		}
 		return actionResultMsg{kind: noticeSuccess, text: catalog.T(lang, i18n.NoticeUninstallDone)}
 	}

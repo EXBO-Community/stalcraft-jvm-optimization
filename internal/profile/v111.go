@@ -5,6 +5,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 )
 
+// Memory-tier profile with calmer G1 pauses and a 6GB heap cap.
 func generateV111Default(sys sysinfo.Info) config.Config {
 	heap := sizeHeapV111(sys.TotalGB())
 	parallel, concurrent := gcThreadsModern(sys.CPUThreads)
@@ -81,6 +82,7 @@ func generateV111Default(sys sysinfo.Info) config.Config {
 	}
 }
 
+// Current stable v1.1 profile. Same generator as v1.1.1.
 func generateV112Default(sys sysinfo.Info) config.Config {
 	return generateV111Default(sys)
 }

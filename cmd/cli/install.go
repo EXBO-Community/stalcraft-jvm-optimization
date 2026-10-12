@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/windows"
 
+	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/elevate"
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/installer"
 )
 
@@ -50,7 +53,18 @@ func runInstall() error {
 }
 
 func runUninstall() error {
-	if err := installer.Uninstall(); err != nil {
+	err := installer.Uninstall()
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) && !windows.GetCurrentProcessToken().IsElevated() {
+		code, elevationErr := elevate.Run("uninstall")
+		if elevationErr != nil {
+			return fmt.Errorf("uninstall elevation: %w", elevationErr)
+		}
+		if code != 0 {
+			return fmt.Errorf("elevated uninstall failed with exit code %d", code)
+		}
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("uninstall: %w", err)
 	}
 	return nil

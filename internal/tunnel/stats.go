@@ -34,6 +34,8 @@ type Cache struct {
 	Endpoints map[string]EndpointHistory `json:"endpoints"`
 }
 
+// Metrics summarizes recent history in milliseconds. ClientRTT, ServerRTT, and
+// Ping are arithmetic means; Median, P90, and Max summarize paired total RTTs.
 type Metrics struct {
 	Samples   int
 	Successes int
@@ -41,7 +43,9 @@ type Metrics struct {
 	ClientRTT float64
 	ServerRTT float64
 	Ping      float64
+	Median    float64
 	P90       float64
+	Max       float64
 	Jitter    float64
 }
 
@@ -125,7 +129,9 @@ func (c Cache) Metrics(region Region, address string, now time.Time) (Metrics, b
 	if !ok {
 		return Metrics{}, false
 	}
-	return calculateMetrics(history.Samples, now, RecentHistoryTTL)
+	recent := recentSamples(history.Samples, now, RecentHistoryTTL)
+	metrics := calculateMetrics(recent, make([]float64, 0, len(recent)))
+	return metrics, metrics.Samples > 0
 }
 
 func (c Cache) WasRecentlyLimited(region Region, address string, now time.Time) bool {
@@ -188,61 +194,68 @@ func (c *Cache) Prune(now time.Time) {
 	}
 }
 
-func (m Metrics) Score(mode SearchMode, clientWeight float64) (float64, bool) {
-	if m.Successes == 0 {
-		return 0, false
-	}
-	for _, value := range []float64{
-		m.LossRate,
-		m.ClientRTT,
-		m.ServerRTT,
-		m.Ping,
-		m.P90,
-		m.Jitter,
-	} {
-		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, false
-		}
-	}
-
-	var score float64
-	switch mode {
-	case SearchModeClientRTT:
-		score = m.ClientRTT
-	case SearchModeServerRTT:
-		score = m.ServerRTT
-	case SearchModeStability:
-		score = m.P90 + 2*m.Jitter + 500*m.LossRate
-	case SearchModeGame:
-		if clientWeight < 0 ||
-			math.IsNaN(clientWeight) ||
-			math.IsInf(clientWeight, 0) {
-			return 0, false
-		}
-		score = m.ClientRTT*clientWeight + m.ServerRTT
-	default:
-		score = m.Ping
-	}
-	if score < 0 || math.IsNaN(score) || math.IsInf(score, 0) {
-		return 0, false
-	}
-	return score, true
-}
-
+// Rank uses paired recent samples and an additive failed-probe penalty.
+// Scores are selection costs, not measured game ping.
 func (c Cache) Rank(
 	targets []Target,
 	mode SearchMode,
 	clientWeight float64,
 	now time.Time,
 ) []RankedTarget {
+	if mode == SearchModeGame &&
+		(clientWeight < 0 || math.IsNaN(clientWeight) || math.IsInf(clientWeight, 0)) {
+		return nil
+	}
+
 	ranked := make([]RankedTarget, 0, len(targets))
 	for _, target := range targets {
-		metrics, ok := c.Metrics(target.Region, target.Endpoint.Address, now)
+		history, ok := c.Endpoints[target.Key()]
 		if !ok {
 			continue
 		}
-		score, ok := metrics.Score(mode, clientWeight)
-		if !ok {
+		recent := recentSamples(history.Samples, now, RecentHistoryTTL)
+		latencies := make([]float64, 0, len(recent))
+		metrics := calculateMetrics(recent, latencies)
+		if metrics.Successes == 0 {
+			continue
+		}
+
+		median, p90 := metrics.Median, metrics.P90
+		switch mode {
+		case SearchModeClientRTT, SearchModeServerRTT, SearchModeGame:
+			valid := true
+			for _, sample := range recent {
+				if sample.TimedOut {
+					continue
+				}
+				var latency float64
+				switch mode {
+				case SearchModeClientRTT:
+					latency = float64(sample.ClientRTTMicros) / 1000
+				case SearchModeServerRTT:
+					latency = float64(sample.ServerRTTMillis)
+				case SearchModeGame:
+					latency = float64(sample.ClientRTTMicros)/1000*clientWeight +
+						float64(sample.ServerRTTMillis)
+				}
+				if latency < 0 || math.IsNaN(latency) || math.IsInf(latency, 0) {
+					valid = false
+					break
+				}
+				latencies = append(latencies, latency)
+			}
+			if !valid {
+				continue
+			}
+			median, p90 = latencyQuantiles(latencies)
+		}
+
+		score := median + 0.5*(p90-median)
+		if mode == SearchModeStability {
+			score = p90
+		}
+		score += float64(ProbeTimeout/time.Millisecond) * metrics.LossRate
+		if score < 0 || math.IsNaN(score) || math.IsInf(score, 0) {
 			continue
 		}
 		ranked = append(ranked, RankedTarget{
@@ -260,7 +273,7 @@ func (c Cache) Rank(
 	return ranked
 }
 
-func calculateMetrics(samples []Sample, now time.Time, maxAge time.Duration) (Metrics, bool) {
+func recentSamples(samples []Sample, now time.Time, maxAge time.Duration) []Sample {
 	recent := make([]Sample, 0, len(samples))
 	for _, sample := range samples {
 		if sample.MeasuredAt.IsZero() || !sample.Valid() {
@@ -272,15 +285,19 @@ func calculateMetrics(samples []Sample, now time.Time, maxAge time.Duration) (Me
 		}
 		recent = append(recent, sample)
 	}
-	if len(recent) == 0 {
-		return Metrics{}, false
-	}
 	sort.Slice(recent, func(i, j int) bool {
 		return recent[i].MeasuredAt.Before(recent[j].MeasuredAt)
 	})
+	return recent
+}
 
+// calculateMetrics uses totals as scratch space and does not retain it.
+func calculateMetrics(recent []Sample, totals []float64) Metrics {
 	metrics := Metrics{Samples: len(recent)}
-	totals := make([]float64, 0, len(recent))
+	if metrics.Samples == 0 {
+		return metrics
+	}
+	totals = totals[:0]
 	var previous float64
 	var jitterTotal float64
 	var jitterSamples int
@@ -305,7 +322,7 @@ func calculateMetrics(samples []Sample, now time.Time, maxAge time.Duration) (Me
 
 	metrics.LossRate = float64(metrics.Samples-metrics.Successes) / float64(metrics.Samples)
 	if metrics.Successes == 0 {
-		return metrics, true
+		return metrics
 	}
 	metrics.ClientRTT /= float64(metrics.Successes)
 	metrics.ServerRTT /= float64(metrics.Successes)
@@ -314,11 +331,22 @@ func calculateMetrics(samples []Sample, now time.Time, maxAge time.Duration) (Me
 		metrics.Jitter = jitterTotal / float64(jitterSamples)
 	}
 
-	sort.Float64s(totals)
-	index := int(math.Ceil(float64(len(totals))*0.9)) - 1
-	index = max(0, min(index, len(totals)-1))
-	metrics.P90 = totals[index]
-	return metrics, true
+	metrics.Median, metrics.P90 = latencyQuantiles(totals)
+	metrics.Max = totals[len(totals)-1]
+	return metrics
+}
+
+// latencyQuantiles sorts scratch values, leaving the recorded samples intact.
+// Callers supply at least one successful sample.
+func latencyQuantiles(values []float64) (median, p90 float64) {
+	sort.Float64s(values)
+	middle := len(values) / 2
+	median = values[middle]
+	if len(values)%2 == 0 {
+		lower := values[middle-1]
+		median = lower + (median-lower)/2
+	}
+	return median, values[int(math.Ceil(float64(len(values))*0.9))-1]
 }
 
 func (s Sample) Valid() bool {

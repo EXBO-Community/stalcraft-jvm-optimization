@@ -5,6 +5,7 @@ import (
 	"github.com/EXBO-Community/stalcraft-jvm-optimization/internal/sysinfo"
 )
 
+// Legacy runtime flags. 6GB minimum heap, high free-RAM based cap; rough on 16GB systems.
 func generateV104Default(sys sysinfo.Info) config.Config {
 	heap := legacyHeapV104(sys)
 	parallel, concurrent := legacyThreadsV104(sys.CPUThreads)
@@ -35,10 +36,12 @@ func generateV104Default(sys sysinfo.Info) config.Config {
 	})
 }
 
+// Same tuning as v1.0.4, kept as a compatibility snapshot.
 func generateV105Default(sys sysinfo.Info) config.Config {
 	return generateV104Default(sys)
 }
 
+// Safer legacy heap sizing: requires 6GB free RAM and caps heap at 8GB.
 func generateV106Default(sys sysinfo.Info) config.Config {
 	heap := legacyHeapV106(sys)
 	parallel, concurrent := legacyThreadsV104(sys.CPUThreads)
@@ -68,10 +71,12 @@ func generateV106Default(sys sysinfo.Info) config.Config {
 	})
 }
 
+// First generated JSON profile. Strong-CPU branch, 6GB minimum heap.
 func generateV107Default(sys sysinfo.Info) config.Config {
 	return generateV107Like(sys, 6, false)
 }
 
+// Lower 4GB minimum heap and safer standard JIT settings.
 func generateV108Default(sys sysinfo.Info) config.Config {
 	return generateV107Like(sys, 4, true)
 }
